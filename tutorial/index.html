@@ -1,0 +1,345 @@
+<html>
+<head>
+    <title>Circuit Breaker Template in Java</title>
+</head>
+
+<body>
+
+<div>
+    <h2>Introduction</h2>
+
+    <p>In this template we will take a look at a typical problem when talking to other
+        systems: dealing with their failure.</p>
+
+    <p>
+        Especially when talking to publicly available services you cannot always operate under the assumption that the
+        third-party service will always be available and always preform well.
+        One reason for a third-party service not being available can be a high load that is crippling the system.
+        Therefore just continuing to send your messages to that system will make the problem worse.
+        A better solution would be to detect problems with third-party systems and react accordingly by stopping sending
+        requests.
+        But this is not only useful in scenarios in which you communicate with third-party services, you can use this to
+        avoid overflowing your own actors, as well.
+    </p>
+
+    <p>Akka provides a circuit breaker component for this exact scenario in its pattern package, and there is a <a
+            href="http://doc.akka.io/docs/akka/2.3.2/common/circuitbreaker.html" class="shortcut">nice documentation</a>
+        for it. But in most real-world scenarios using only the circuit breaker will not be enough. In this template we
+        will take a look how to deal with the problems that might arise.</p>
+</div>
+
+<div>
+    <h2>The Service</h2>
+
+    <p>
+        First we will need a Service to call. We will simulate this service using an actor. Take a look at the code in
+        <a href="#code/src/main/java/Service.java" class="shortcut">Service.java</a>.
+    </p>
+
+    <p>
+        The Service actor will simulate a service that becomes very slow from time to time.
+        In the constructor we set up a regular <code>Swap</code> message, that will be sent to the actor every 5
+        seconds.
+        When receiving the <code>Swap</code> message the actor will change its behavior. In its normal state it will
+        reply to
+        each <code>Task</code> message with a <code>Response</code> message. Upon the first <code>Swap</code> message it
+        will change its behavior. In this new state it will block for 1 seconds and ignore the message. No response will
+        be sent.</p>
+
+    <p>
+        The next <code>Swap</code> message will
+        revert the Service back to the normal behavior. Please note that blocking inside an actor is an anti-pattern,
+        and should not be done normally, as it makes actors unresponsive and takes computing time away from other
+        actors. In this case, however, it simulates exactly what we need, a service that does not respond to our
+        requests, and does not handle new requests in the mean time. A nice side-effect is that the queued messages
+        prevent the swap message from being handled, an indication that us sending the service messages impedes it from
+        recovering.
+    </p>
+
+    <p>
+        Let's see what happens when we run it.
+    </p>
+
+    <p>
+        We defined a <code>main</code> method in the <a href="#code/src/main/java/Main.java"
+                                                        class="shortcut">Main.java</a> class. It creates an actor
+        system, and the service actor, before setting up a regular <code>Task</code> message that will be sent every 100
+        milliseconds. Then we wait for 30 seconds, before shutting everything down. Thanks to the log statements in the
+        actor we can observe what happens when we execute the <a href="#run" class="shortcut">program</a>. Each <code>Task</code>
+        message receives incremented ids, so we can follow the messages in the log.
+    </p>
+
+    <p>
+        First we will see a number of requests and responses, after 5 seconds the first <code>Swap</code> message is
+        received and we see that there is a delay of one second between request and response. After 5 seconds the second
+        <code>Swap</code> message should arrive, but as there are still <code>Task</code> messages in the
+        <code>Service</code> actors mailbox, the <code>Swap</code> message will be delayed. Obviously this is a problem.
+    </p>
+
+    <p>
+        Let's try to take the load off our service.
+    </p>
+</div>
+
+
+<div>
+    <h2>Introducing the circuit breaker</h2>
+
+    <p>
+        Let us tackle the problem using a circuit breaker. The relevant code can be found in <a
+            href="#code/src/main/java/SimpleCircuitBreaker.java" class="shortcut">SimpleCircuitBreaker.java</a>.
+    </p>
+
+    <p>
+        Let us go through the code.</p>
+
+    <p> First we need to initialize the circuit breaker:
+        <pre><code>new CircuitBreaker( getContext().dispatcher(),
+            getContext().system().scheduler(),
+            MAX_FAILURES,
+            CALL_TIMEOUT,
+            RESET_TIMEOUT )</code></pre>
+    We need to specify the dispatcher the circuit breaker will be running on, as well as a scheduler. The scheduler is
+    necessary as the
+    circuit breaker uses <code>Callable</code>s to send the messages to the service. Next, we set the maximum number of
+    failed
+    attempts before the circuit breaker opens. This setting is very specific to your situation. If the service you
+    are talking to is on the same machine as your Akka process, you can use a low setting, as failures are most
+    likely caused by problems within the service. On the other hand, a service you connect to through the internet may
+    fail on occasion because there are problems with the connection, you will want to make sure that you do not
+    stop the message flow just because one or two messages got lost. Similarly the next two settings depend very
+    much on your unique situation. First, the call timeout specifies how long the circuit breaker is willing to wait
+    for a response. If the response is not received in this timeframe, it will be considered failed. The last
+    parameter is the reset timeout, the time the circuit breaker will wait after opening until it tries to send
+    another request.
+    </p>
+    <p>
+        After creating the circuit breaker, we register some callbacks to be notified when the circuit breaker changes
+        its state. In this case we will simply log the changed state, you could have more complex logic in there though.
+    </p>
+</div>
+<div>
+    <h2>Sending messages</h2>
+
+    <p>
+        Now, take a look at lines 61-67 to see how to send messages to the service using the circuit breaker. The
+        circuit breaker
+        provides two modes of operation, callWithCircuitBreaker will make the call asynchronously and return a future
+        containing the result of the call, while callWithSyncCircuitBreaker allows you to perform a synchronous call. As
+        you are fully aware, performing synchronous calls inside of actors can be problematic, so we will use the
+        asynchronous method here. The method expects a callable object as parameter, which we will declare anonymously
+        at this point. The callable needs to return a <code>Future&lt;Object&gt;</code>. This makes it very natural to
+        combine the circuit breaker with the <code>Ask</code> Pattern, since it returns
+        <code>Future&lt;Object&gt;</code>. We send the <code>Task</code> to the service, and let the circuit breaker
+        wait for the response for us. In order to return the result to our caller, we use the <code>PipeTo</code>
+        pattern to return the response once the future is done.
+    </p>
+
+    <p>
+        Time to run the example. Go to the <a href="#code/src/main/java/Main.java" class="shortcut">Main.java</a> class
+        and comment line 13, while uncommenting line 14,
+    <pre><code>system.actorOf( SimpleCircuitBreaker.props(), "SimpleCircuitBreaker" );</code></pre>
+    Once you've done this, click <code>Save</code> and switch to the <a
+        href="#run" class="shortcut">Run</a> tab. Activator should run the program after compiling automatically,
+    unless you switched this off. In that case, just click the <code>Start</code> button.
+    </p>
+    <p>
+        Using the CircuitBreaker works quite nicely for our use case. After the service switches into slow mode, it will
+        still receive some messages until the circuit breaker realizes something is wrong, but then the flow of messages
+        stops, and the service can recover. The circuit breaker will probe if the service is available again, and if it
+        is, will resume sending the requests.
+
+        There is one problem though. The <code>Task</code> messages that are sent while the Service is in slow mode are
+        never delivered.
+    </p>
+
+</div>
+<div>
+
+    <h2>More on the circuit breaker</h2>
+
+
+    <p>
+        Before we move on, note that we use the call timeout of the circuit breaker for the ask timeout. This may or may
+        not make sense for your use-case. You may want to use a longer timeout for the ask, so as to still receive
+        responses from the service, even if the circuit breaker will treat that call as failed and cease sending further
+        messages. Note that you will need to add handling of the messages in this case, as responses of timed out calls
+        are not returned. Also, it is noteworthy that for the asynchronous call method the call timeout is only used to
+        decide if
+        the call failed or succeeded, the call will not be interrupted after the timeout. This is useful when you want
+        to get the result, but it means that the circuit breaker will open only after the call finishes. Try setting the
+        ask timeout to a higher value in the code (e.g. <code>500</code>), and see what happens.
+    </p>
+
+    <p>
+        For some use cases this simple solution is already all you need. But usually creating our messages was hard
+        work, we want to make sure they all reach the target. Right now they are just being discarded. So we need to
+        make sure to remember all messages for which we did not receive a response from our service yet. There are
+        several possibilities to do this. While it is entirely possible to do this using a queue and some
+        <code>become</code> magic, this is not necessary anymore. Akka 2.3 saw the introduction of Akka Persistence,
+        which allows to persist messages, which sounds like just the thing we need.
+    </p>
+</div>
+
+<div>
+    <h2>Adding a channel</h2>
+
+    <p>
+        What we are trying to do here, is to accomplish at-least-once delivery. Channels and Persistent Channels are two
+        concepts introduced in Akka Persistance that allow to do that. Normally Akka guarantees at-most-once
+        delivery (read <a href="http://doc.akka.io/docs/akka/2.3.2/general/message-delivery-reliability.html">here</a>
+        for a detailed discussion of message delivery reliability), and this is what we saw in the earlier examples, no
+        Task was delivered twice to the service. However, a lot of the Tasks got lost on the way. With at-least-once
+        delivery we will make sure that every one reaches
+        its destination.
+    </p>
+
+    <p>
+        When using channels the messages are wrapped in <code>Deliver</code> envelopes and sent to a channel. The <code>Deliver</code>
+        envelope in
+        turn contains a <code>Persistent</code> envelope and the path of the actor the channels should sent the message
+        to. The
+        <code>Persistent</code> envelope is used when the message is persisted to disk by the channel. The receiving
+        actor will
+        receive a message of the type <code>ConfirmablePersistent</code>, on which it can call the
+        <code>confirm()</code> method to acknowledge
+        successful delivery. The <code>payload()</code> method can be used to return the message contained in the
+        envelope. If a
+        message is not confirmed after a certain amount of time, the channel will resend the message. If the message is
+        still not confirmed after a number of resend attempts the channel will shut down and not attempt to sent further
+        messages until it is reactivated.
+    </p>
+
+    <p>
+        We will use the resending feature to make sure <code>Task</code>s that were rejected by the circuit breaker or
+        received no
+        response from the service will be resent. In order to do this, the <code>Task</code>s will be first sent into a
+        channel, and
+        the channel will forward them to the circuit breaker. As we want to make sure that the service received the
+        message, the messages will only be confirmed when the response was received. For that we (mis-)use the map
+        function on the response future. While the future will be returned unchanged, we will confirm the confirmable as
+        a
+        side-effect.
+    </p>
+</div>
+
+<div>
+    <h2>The persisting circuit breaker</h2>
+
+    <p>
+        Take a look at <a href="#code/src/main/java/PersistingCircuitBreaker.java" class="shortcut">PersistingCircuitBreaker.java</a>
+        The <code>PersistingCircuitBreaker</code> actor creates the channel in line 28. Channels come with a
+        ChannelSettings class that can be used to modify the channel behavior, and comes with a nice fluent Java API. In
+        this case, we set the redelivery to 1 second. We also create a circuit breaker actor, that is basically equal to
+        the <code>SimpleCircuitBreaker</code> actor we used in the last step. Upon receiving a <code>Task</code> message
+        the <code>PersistingCircuitBreaker</code> will wrap it into the two envelopes and send it to the <code>CircuitBreakerPersistentActor</code>.
+        Note that we state the original sender as sender of the message, therefore the responses will bypass the <code>PersistingCircuitBreaker</code>
+        actor, which is why we do not have any code to deal with <code>Response</code> messages.
+    </p>
+
+    <p>
+        In <code>CircuitBreakerPersistentActor</code> we had to add handling of <code>ConfirmablePersistent</code>
+        messages. We extract and send the payload (which is our <code>Task</code> message), and if we receive a <code>Response</code>
+        message, we confirm the original message. Akka Persistence takes care of notifying the channel that the delivery
+        was successful, and that the message should not be resent.
+    </p>
+</div>
+
+<div>
+    <h2>Running the example</h2>
+
+    <p>Go to the <a href="#code/src/main/java/Main.java" class="shortcut">Main.java</a> class
+        and comment line 14, while uncommenting line 15,
+    <pre><code>system.actorOf( PersistingCircuitBreaker.props(), "PersistingCircuitBreaker" );</code></pre>
+    Once you've done this, click <code>Save</code> and switch to the <a
+        href="#run" class="shortcut">Run</a> tab. Activator should run the program after compiling automatically,
+    unless you switched this off. In that case, just click the <code>Start</code> button.</p>
+
+    <p>
+        Starting the program we now see that after the service recovered it will receive the messages that could not be
+        sent during the down time. Usually you will see Tasks 103-112 before tasks 52-102 will be replayed. That is
+        because the redelivery time is set to 1 second.
+    </p>
+
+    <p>
+        Usually you will want to use PersistentChannel instead of Channel. In addition to providing at-least-once
+        delivery, PersistentChannel will persist all messages to disk, thus making sure that the messages will be
+        replayed after a JVM crash or similar unfortunate incidents. In order to achieve this, go to <a
+            href="#code/src/main/java/PersistingCircuitBreaker.java" class="shortcut">PersistingCircuitBreaker.java</a>
+        and lines 34-41 in
+        the constructor and comment or remove lines 28-31.
+        When running the example now you will not see much difference. However, running it a second time you will notice
+        that the run does not start with Task 0 instead, it starts with Tasks 50 and other tasks that were not
+        delivered in the last run.
+    </p>
+
+    <p>
+        Persistent Channels offer a number of settings. Two of those are very interesting in our context, pending
+        confirmations max and min. With those two values the channel can be stop sending further messages if a certain
+        number of messages is not yet confirmed. The min value allows to set a value at which sending will be resumed.
+        In effect, this can be used to build a simple circuit breaker.
+    </p>
+
+</div>
+
+<div>
+    <h2>The persistence only solution</h2>
+
+    <p>
+        The last step is to see how well we can make it work using only persistent channel. Take a look at the code in
+        <a
+                href="#code/src/main/java/PersistingChannelLimiter.java"
+                class="shortcut">PersistingChannelLimiter.java</a>. You will note that it contains two other actors.
+        First the <code>PersistentReceiver</code>. This is the actor the <code>Tasks</code> are sent to through the channel. The receiver creates
+        a temporary actor to deal with each of the messages it received from the channel. Those actors are defined in
+        <code>ServiceCaller</code>. They extract the <code>Task</code> from the <code>ConfirmablePersistent</code> and hold the information about the original
+        sender and the confirmable in their internal state until they receive a <code>Response</code>. When a <code>Response</code> is received,
+        they confirm the original message so that it will not be sent once more and return the response to the original
+        sender. After this they are stopped. This is important, as we create a new actor for each task, so this would be
+        a memory leak if the actors were not stopped. This is also the reason why we define a receive timeout, so that
+        we can stop the actor when the service does not respond, either because it is down, or because the response got
+        lost.
+    </p>
+
+    <p>
+        If we use this solution in our <a href="#code/src/main/java/Main.java" class="shortcut">Main.java</a> method, we see that the output is nearly
+        perfect, all messages are
+        delivered, only two messages are delivered to the service once it stops being responsive. This approach works
+        fine however it has some restrictions. If the response time of the service is slower than the rate of messages
+        coming in, this solution can turn into a bottleneck, as the number of maximum pending messages will limit how
+        many messages you can send. In contrast the circuit breaker imposes no limits while the service responds, and
+        only acts when the service has problems. Therefore we would suggest using the circuit breaker where possible,
+        and ensure resending of messages using a persistent channel with unlimited number of pending messages. When the
+        service is part of your own system or a responsive system with a very fast connection the channel only solution
+        can be interesting to look at, as it is simpler and easier to implement.
+    </p>
+</div>
+
+
+<div>
+    <h2>Further exercises</h2>
+
+    <p>
+        In order to gain more experience with circuit breakers you can try several things using this template:
+    <ul>
+        <li>Make the service respond in slow mode and check how the different implementations deal with this</li>
+        <li>Add a delay to responding to a Task in normal mode and look at how the different implementations deal with
+            this
+        </li>
+        <li>Use variable delays in the service, make it return or drop responses randomly, which solution is the best
+            under this circumstances?
+        </li>
+    </ul>
+    </p>
+
+    <p>
+        We hope you had fun going through this template with us. Any issues, feedback or questions can be given using
+        the GitHub page of this template.
+    </p>
+
+    <p>
+        Happy hAkking !
+    </p>
+</div>
+</body>
+</html>
