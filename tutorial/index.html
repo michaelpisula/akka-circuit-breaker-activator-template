@@ -43,7 +43,7 @@
         When receiving the <code>Swap</code> message the actor will change its behavior. In its normal state it will
         reply to
         each <code>Task</code> message with a <code>Response</code> message. Upon the first <code>Swap</code> message it
-        will change its behavior. In this new state it will block for 1 seconds and ignore the message. No response will
+        will change its behavior. In this new state it will block for 1 second and ignore the message. No response will
         be sent.</p>
 
     <p>
@@ -63,15 +63,15 @@
     <p>
         We defined a <code>main</code> method in the <a href="#code/src/main/java/Main.java"
                                                         class="shortcut">Main.java</a> class. It creates an actor
-        system, and the service actor, before setting up a regular <code>Task</code> message that will be sent every 100
-        milliseconds. Then we wait for 30 seconds, before shutting everything down. Thanks to the log statements in the
+        system, and the service actor, before setting up a regular <code>Task</code> message that will be sent every 200
+        milliseconds. Then we wait for 10 seconds, before shutting everything down. Thanks to the log statements in the
         actor we can observe what happens when we execute the <a href="#run" class="shortcut">program</a>. Each <code>Task</code>
         message receives incremented ids, so we can follow the messages in the log.
     </p>
 
     <p>
-        First we will see a number of requests and responses, after 5 seconds the first <code>Swap</code> message is
-        received and we see that there is a delay of one second between request and response. After 5 seconds the second
+        First we will see a number of requests and responses, after 2 seconds the first <code>Swap</code> message is
+        received and we see that there is a delay of one second between request and response. After 2 seconds the second
         <code>Swap</code> message should arrive, but as there are still <code>Task</code> messages in the
         <code>Service</code> actors mailbox, the <code>Swap</code> message will be delayed. Obviously this is a problem.
     </p>
@@ -196,31 +196,16 @@
 
     <p>
         When using channels the messages are wrapped in <code>Deliver</code> envelopes and sent to a channel. The <code>Deliver</code>
-        envelope in
-        turn contains a <code>Persistent</code> envelope and the path of the actor the channels should sent the message
-        to. The
-        <code>Persistent</code> envelope is used when the message is persisted to disk by the channel. The receiving
-        actor will
-        receive a message of the type <code>ConfirmablePersistent</code>, on which it can call the
-        <code>confirm()</code> method to acknowledge
-        successful delivery. The <code>payload()</code> method can be used to return the message contained in the
-        envelope. If a
-        message is not confirmed after a certain amount of time, the channel will resend the message. If the message is
-        still not confirmed after a number of resend attempts the channel will shut down and not attempt to sent further
-        messages until it is reactivated.
+        envelope in turn contains a <code>Persistent</code> envelope and the path of the actor the channels should send
+        the message to. The <code>Persistent</code> envelope is used when the message is persisted to disk by the
+        channel. The receiving actor will receive a message of the type <code>ConfirmablePersistent</code>, on which it
+        can call the <code>confirm()</code> method to acknowledge successful delivery. The <code>payload()</code> method
+        can be used to return the message contained in the envelope. If a message is not confirmed after a certain
+        amount of time, the channel will resend the message. If the message is still not confirmed after a number of
+        resend attempts the channel will shut down and not attempt to sent further messages until it is reactivated.
     </p>
 
-    <p>
-        We will use the resending feature to make sure <code>Task</code>s that were rejected by the circuit breaker or
-        received no
-        response from the service will be resent. In order to do this, the <code>Task</code>s will be first sent into a
-        channel, and
-        the channel will forward them to the circuit breaker. As we want to make sure that the service received the
-        message, the messages will only be confirmed when the response was received. For that we (mis-)use the map
-        function on the response future. While the future will be returned unchanged, we will confirm the confirmable as
-        a
-        side-effect.
-    </p>
+
 </div>
 
 <div>
@@ -243,6 +228,15 @@
         message, we confirm the original message. Akka Persistence takes care of notifying the channel that the delivery
         was successful, and that the message should not be resent.
     </p>
+
+    <p>
+        We use the resending feature to make sure <code>Task</code>s that were rejected by the circuit breaker or
+        received no response from the service will be resent. In order to do this, the <code>Task</code>s will be first
+        sent into a channel, and the channel will forward them to the circuit breaker. As we want to make sure that the
+        service received the message, the messages will only be confirmed when the response was received. For that we
+        (mis-)use the map function on the response future. While the future will be returned unchanged, we will confirm
+        the confirmable as a side-effect.
+    </p>
 </div>
 
 <div>
@@ -257,7 +251,7 @@
 
     <p>
         Starting the program we now see that after the service recovered it will receive the messages that could not be
-        sent during the down time. Usually you will see Tasks 103-112 before tasks 52-102 will be replayed. That is
+        sent during the down time. Usually you will see Tasks 23-25 before tasks 11-20 will be replayed. That is
         because the redelivery time is set to 1 second.
     </p>
 
@@ -266,17 +260,18 @@
         delivery, PersistentChannel will persist all messages to disk, thus making sure that the messages will be
         replayed after a JVM crash or similar unfortunate incidents. In order to achieve this, go to <a
             href="#code/src/main/java/PersistingCircuitBreaker.java" class="shortcut">PersistingCircuitBreaker.java</a>
-        and lines 34-41 in
+        and lines 33-41 in
         the constructor and comment or remove lines 28-31.
         When running the example now you will not see much difference. However, running it a second time you will notice
-        that the run does not start with Task 0 instead, it starts with Tasks 50 and other tasks that were not
+        that the run does not start with Task 0, instead it starts with tasks that were not
         delivered in the last run.
     </p>
 
     <p>
         Persistent Channels offer a number of settings. Two of those are very interesting in our context, pending
-        confirmations max and min. With those two values the channel can be stop sending further messages if a certain
-        number of messages is not yet confirmed. The min value allows to set a value at which sending will be resumed.
+        confirmations max and min. With those two values the channel can be stopped from sending further messages if a
+        certain number of messages is not yet confirmed. The min value allows to set a value at which sending will be
+        resumed.
         In effect, this can be used to build a simple circuit breaker.
     </p>
 
@@ -290,10 +285,13 @@
         <a
                 href="#code/src/main/java/PersistingChannelLimiter.java"
                 class="shortcut">PersistingChannelLimiter.java</a>. You will note that it contains two other actors.
-        First the <code>PersistentReceiver</code>. This is the actor the <code>Tasks</code> are sent to through the channel. The receiver creates
+        First the <code>PersistentReceiver</code>. This is the actor the <code>Tasks</code> are sent to through the
+        channel. The receiver creates
         a temporary actor to deal with each of the messages it received from the channel. Those actors are defined in
-        <code>ServiceCaller</code>. They extract the <code>Task</code> from the <code>ConfirmablePersistent</code> and hold the information about the original
-        sender and the confirmable in their internal state until they receive a <code>Response</code>. When a <code>Response</code> is received,
+        <code>ServiceCaller</code>. They extract the <code>Task</code> from the <code>ConfirmablePersistent</code> and
+        hold the information about the original
+        sender and the confirmable in their internal state until they receive a <code>Response</code>. When a <code>Response</code>
+        is received,
         they confirm the original message so that it will not be sent once more and return the response to the original
         sender. After this they are stopped. This is important, as we create a new actor for each task, so this would be
         a memory leak if the actors were not stopped. This is also the reason why we define a receive timeout, so that
@@ -302,7 +300,8 @@
     </p>
 
     <p>
-        If we use this solution in our <a href="#code/src/main/java/Main.java" class="shortcut">Main.java</a> method, we see that the output is nearly
+        If we use this solution in our <a href="#code/src/main/java/Main.java" class="shortcut">Main.java</a> method, we
+        see that the output is nearly
         perfect, all messages are
         delivered, only two messages are delivered to the service once it stops being responsive. This approach works
         fine however it has some restrictions. If the response time of the service is slower than the rate of messages

@@ -58,7 +58,7 @@ public class PersistingCircuitBreaker extends UntypedActor {
     public static final int MAX_FAILURES = 2;
     public static final int ASK_TIMEOUT = 100;
     public static final FiniteDuration CALL_TIMEOUT = Duration.create( 100, TimeUnit.MILLISECONDS );
-    public static final FiniteDuration RESET_TIMEOUT = Duration.create( 5, TimeUnit.SECONDS );
+    public static final FiniteDuration RESET_TIMEOUT = Duration.create( 2, TimeUnit.SECONDS );
 
     private final ActorRef service;
     private final CircuitBreaker circuitBreaker;

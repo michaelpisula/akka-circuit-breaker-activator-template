@@ -5,6 +5,7 @@ import akka.actor.UntypedActor;
 import akka.event.Logging;
 import akka.event.LoggingAdapter;
 import akka.persistence.*;
+import scala.Option;
 import scala.concurrent.duration.Duration;
 
 import java.util.concurrent.TimeUnit;
@@ -19,10 +20,15 @@ public class PersistingChannelLimiter extends UntypedActor {
   }
 
   public PersistingChannelLimiter() {
-    channel = getContext().actorOf( PersistentChannel.props( PersistentChannelSettings.create()
-                                                                                      .withPendingConfirmationsMax( 2 )
-                                                                                      .withPendingConfirmationsMin( 2 )
-    ), "Channel" );
+    PersistentChannelSettings channelSettings =
+        new PersistentChannelSettings( 5, Duration.create( 2, TimeUnit.SECONDS ),
+                                       Option.<ActorRef>empty(),
+                                       false,
+                                       2,
+                                       2,
+                                       Duration.create( 1, TimeUnit.SECONDS )
+        );
+    channel = getContext().actorOf( PersistentChannel.props( channelSettings ), "Channel" );
     receiver = getContext().actorOf( PersistentReceiver.props(), "PersistentReceiver" );
   }
 

@@ -18,7 +18,7 @@ public class Main {
     final Inbox inbox = Inbox.create( system );
 
     system.scheduler().schedule( Duration.create( 0, TimeUnit.SECONDS ),
-                                 Duration.create( 100, TimeUnit.MILLISECONDS ),
+                                 Duration.create( 200, TimeUnit.MILLISECONDS ),
                                  new Runnable() {
                                    @Override
                                    public void run() {
@@ -27,7 +27,7 @@ public class Main {
                                  }, system.dispatcher()
     );
 
-    Thread.sleep( 30000 );
+    Thread.sleep( 10000 );
 
     system.shutdown();
     system.awaitTermination();

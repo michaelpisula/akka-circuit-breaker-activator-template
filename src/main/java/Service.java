@@ -17,7 +17,7 @@ public class Service extends UntypedActor {
   }
 
   public Service() {
-    FiniteDuration duration = Duration.create( 5, TimeUnit.SECONDS );
+    FiniteDuration duration = Duration.create( 2, TimeUnit.SECONDS );
     getContext().system()
                 .scheduler()
                 .schedule( duration,
