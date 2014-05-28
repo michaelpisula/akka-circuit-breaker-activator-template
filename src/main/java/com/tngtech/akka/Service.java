@@ -1,3 +1,5 @@
+package com.tngtech.akka;
+
 import akka.actor.Props;
 import akka.actor.UntypedActor;
 import akka.event.Logging;
@@ -50,7 +52,6 @@ public class Service extends UntypedActor {
   }
 
   private void sendResponse() {
-    log.info( "Creating response" );
     getSender().tell( new Response(), getSelf() );
   }
 
@@ -75,7 +76,4 @@ public class Service extends UntypedActor {
   public static class Swap {
   }
 
-  public static void main( String[] args ) {
-
-  }
 }
