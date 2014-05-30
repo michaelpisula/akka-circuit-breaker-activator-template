@@ -7,13 +7,18 @@ import akka.actor.UntypedActor;
 import akka.dispatch.Mapper;
 import akka.event.Logging;
 import akka.event.LoggingAdapter;
+import akka.japi.JavaPartialFunction;
+import akka.japi.pf.CaseStatement;
+import akka.japi.pf.FI;
 import akka.pattern.CircuitBreaker;
 import akka.pattern.Patterns;
 import akka.persistence.*;
 import scala.Option;
+import scala.PartialFunction;
 import scala.concurrent.Future;
 import scala.concurrent.duration.Duration;
 import scala.concurrent.duration.FiniteDuration;
+import scala.util.Try;
 
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
@@ -111,14 +116,16 @@ public class PersistingCircuitBreaker extends UntypedActor {
           Future<Object> cbFuture = circuitBreaker.callWithCircuitBreaker( new Callable<Future<Object>>() {
             @Override
             public Future<Object> call() throws Exception {
-              return Patterns.ask( service, task, ASK_TIMEOUT ).map( new Mapper<Object, Object>() {
-                // PN The purpose is not really to map. Perhaps use onSuccess?
+              return Patterns.ask( service, task, ASK_TIMEOUT ).andThen( new JavaPartialFunction<Try<Object>, Object>() {
+
                 @Override
-                public Object apply( Object response ) {
+                public Object apply( Try<Object> response, boolean isCheck ) throws Exception {
                   confirmablePersistent.confirm();
                   return response;
                 }
+
               }, getContext().system().dispatcher() );
+
             }
           } );
           Patterns.pipe( cbFuture, getContext().system().dispatcher() ).to( sender );
