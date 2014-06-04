@@ -4,21 +4,15 @@ import akka.actor.ActorRef;
 import akka.actor.Props;
 import akka.actor.ReceiveTimeout;
 import akka.actor.UntypedActor;
-import akka.dispatch.Mapper;
 import akka.event.Logging;
 import akka.event.LoggingAdapter;
 import akka.japi.JavaPartialFunction;
-import akka.japi.pf.CaseStatement;
-import akka.japi.pf.FI;
 import akka.pattern.CircuitBreaker;
 import akka.pattern.Patterns;
 import akka.persistence.*;
-import scala.Option;
-import scala.PartialFunction;
 import scala.concurrent.Future;
 import scala.concurrent.duration.Duration;
 import scala.concurrent.duration.FiniteDuration;
-import scala.util.Try;
 
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
@@ -28,15 +22,15 @@ public class PersistingCircuitBreaker extends UntypedActor {
   private final ActorRef channel;
   private final ActorRef circuitBreaker;
 
-  public static Props props(Props serviceProps) {
+  public static Props props( Props serviceProps ) {
     return Props.create( PersistingCircuitBreaker.class, serviceProps );
   }
 
-  public PersistingCircuitBreaker(Props serviceProps) {
+  public PersistingCircuitBreaker( Props serviceProps ) {
     channel = getContext().actorOf( Channel.props( ChannelSettings
                                                        .create()
                                                        .withRedeliverInterval( Duration.create( 1, TimeUnit.SECONDS )
-                                                      ) ), "Channel" );
+                                                       ) ), "Channel" );
 /*    PersistentChannelSettings channelSettings =
         new PersistentChannelSettings( 5, Duration.create( 1, TimeUnit.SECONDS ),
                                        Option.<ActorRef>empty(),
@@ -48,7 +42,7 @@ public class PersistingCircuitBreaker extends UntypedActor {
     channel = getContext().actorOf( PersistentChannel.props( channelSettings ) );
         */
 
-    circuitBreaker = getContext().actorOf( CircuitBreakerPersistentActor.props(serviceProps), "CircuitBreaker" );
+    circuitBreaker = getContext().actorOf( CircuitBreakerPersistentActor.props( serviceProps ), "CircuitBreaker" );
   }
 
   @Override
@@ -57,8 +51,8 @@ public class PersistingCircuitBreaker extends UntypedActor {
       Service.Task task = (Service.Task) message;
       channel.tell( Deliver.create( Persistent.create( task ), circuitBreaker.path() ), getSender() );
 
-//      ActorRef failureHandler = getContext().actorOf( PersistanceResultHandler.props( getSender() ) );
-//      channel.tell( Deliver.create( Persistent.create( task ), circuitBreaker.path() ), failureHandler );
+      //      ActorRef failureHandler = getContext().actorOf( PersistanceResultHandler.props( getSender() ) );
+      //      channel.tell( Deliver.create( Persistent.create( task ), circuitBreaker.path() ), failureHandler );
     }
   }
 
@@ -74,11 +68,11 @@ public class PersistingCircuitBreaker extends UntypedActor {
     private final ActorRef service;
     private final CircuitBreaker circuitBreaker;
 
-    public static Props props(Props serviceProps) {
+    public static Props props( Props serviceProps ) {
       return Props.create( CircuitBreakerPersistentActor.class, serviceProps );
     }
 
-    public CircuitBreakerPersistentActor(Props serviceProps) {
+    public CircuitBreakerPersistentActor( Props serviceProps ) {
       circuitBreaker = new CircuitBreaker( getContext().dispatcher(),
                                            getContext().system().scheduler(),
                                            MAX_FAILURES,
@@ -116,16 +110,17 @@ public class PersistingCircuitBreaker extends UntypedActor {
           Future<Object> cbFuture = circuitBreaker.callWithCircuitBreaker( new Callable<Future<Object>>() {
             @Override
             public Future<Object> call() throws Exception {
-              return Patterns.ask( service, task, ASK_TIMEOUT ).andThen( new JavaPartialFunction<Try<Object>, Object>() {
-
+              Future<Object> response = Patterns.ask( service, task, ASK_TIMEOUT );
+              response.onSuccess( new JavaPartialFunction<Object, Object>() {
                 @Override
-                public Object apply( Try<Object> response, boolean isCheck ) throws Exception {
+                public Object apply( Object response, boolean isCheck ) throws Exception {
+
                   confirmablePersistent.confirm();
                   return response;
                 }
 
               }, getContext().system().dispatcher() );
-
+              return response;
             }
           } );
           Patterns.pipe( cbFuture, getContext().system().dispatcher() ).to( sender );
@@ -149,7 +144,7 @@ public class PersistingCircuitBreaker extends UntypedActor {
 
   public static class PersistanceResultHandler extends UntypedActor {
 
-    public static Props props(ActorRef originalSender) {
+    public static Props props( ActorRef originalSender ) {
       return Props.create( PersistanceResultHandler.class, originalSender );
     }
 
@@ -170,8 +165,8 @@ public class PersistingCircuitBreaker extends UntypedActor {
       } else if ( message instanceof Persistent ) {
         log.debug( "Persistence is working" );
       } else if ( message instanceof ReceiveTimeout ) {
-        log.error("Persistence took too long, presuming failed");
-      }else {
+        log.error( "Persistence took too long, presuming failed" );
+      } else {
         originalSender.tell( message, getSender() );
       }
       getContext().stop( getSelf() );
