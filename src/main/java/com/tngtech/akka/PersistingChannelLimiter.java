@@ -1,3 +1,5 @@
+package com.tngtech.akka;
+
 import akka.actor.ActorRef;
 import akka.actor.Props;
 import akka.actor.ReceiveTimeout;
@@ -15,11 +17,11 @@ public class PersistingChannelLimiter extends UntypedActor {
   private final ActorRef channel;
   private final ActorRef receiver;
 
-  public static Props props() {
-    return Props.create( PersistingChannelLimiter.class );
+  public static Props props(Props serviceProps) {
+    return Props.create( PersistingChannelLimiter.class, serviceProps );
   }
 
-  public PersistingChannelLimiter() {
+  public PersistingChannelLimiter(Props serviceProps) {
     PersistentChannelSettings channelSettings =
         new PersistentChannelSettings( 5, Duration.create( 2, TimeUnit.SECONDS ),
                                        Option.<ActorRef>empty(),
@@ -29,7 +31,7 @@ public class PersistingChannelLimiter extends UntypedActor {
                                        Duration.create( 1, TimeUnit.SECONDS )
         );
     channel = getContext().actorOf( PersistentChannel.props( channelSettings ), "Channel" );
-    receiver = getContext().actorOf( PersistentReceiver.props(), "PersistentReceiver" );
+    receiver = getContext().actorOf( PersistentReceiver.props(serviceProps), "PersistentReceiver" );
   }
 
   @Override
@@ -42,14 +44,14 @@ public class PersistingChannelLimiter extends UntypedActor {
 
   public static class PersistentReceiver extends UntypedActor {
 
-    public static Props props() {
-      return Props.create( PersistentReceiver.class );
+    public static Props props(Props serviceProps) {
+      return Props.create( PersistentReceiver.class, serviceProps );
     }
 
     private final ActorRef service;
 
-    public PersistentReceiver() {
-      service = getContext().actorOf( Service.props(), "Service" );
+    public PersistentReceiver(Props serviceProps) {
+      service = getContext().actorOf( serviceProps, "Service" );
     }
 
     @Override

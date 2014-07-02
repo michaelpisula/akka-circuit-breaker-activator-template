@@ -6,7 +6,7 @@ scalaVersion := "2.10.2"
 
 compileOrder := CompileOrder.JavaThenScala
 
-mainClass in (Compile,run) := Some("Main")
+mainClass in (Compile,run) := Some("com.tngtech.akka.Main")
 
 javacOptions ++= Seq("-source", "1.7", "-target", "1.7")
 

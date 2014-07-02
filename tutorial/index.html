@@ -13,7 +13,7 @@
 
     <p>
         Especially when talking to publicly available services you cannot always operate under the assumption that the
-        third-party service will always be available and always preform well.
+        third-party service will always be available and always perform well.
         One reason for a third-party service not being available can be a high load that is crippling the system.
         Therefore just continuing to send your messages to that system will make the problem worse.
         A better solution would be to detect problems with third-party systems and react accordingly by stopping sending
@@ -32,13 +32,14 @@
     <h2>The Service</h2>
 
     <p>
-        First we will need a Service to call. We will simulate this service using an actor. Take a look at the code in
-        <a href="#code/src/main/java/Service.java" class="shortcut">Service.java</a>.
+        First we will need a Service to call. We will simulate this service using an actor. Take a look
+        at the code in
+        <a href="#code/src/main/java/com/tngtech/akka/Service.java" class="shortcut">Service.java</a>.
     </p>
 
     <p>
         The Service actor will simulate a service that becomes very slow from time to time.
-        In the constructor we set up a regular <code>Swap</code> message, that will be sent to the actor every 5
+        In the constructor we set up a regular <code>Swap</code> message, that will be sent to the actor every 2
         seconds.
         When receiving the <code>Swap</code> message the actor will change its behavior. In its normal state it will
         reply to
@@ -48,9 +49,9 @@
 
     <p>
         The next <code>Swap</code> message will
-        revert the Service back to the normal behavior. Please note that blocking inside an actor is an anti-pattern,
-        and should not be done normally, as it makes actors unresponsive and takes computing time away from other
-        actors. In this case, however, it simulates exactly what we need, a service that does not respond to our
+        revert the Service back to the normal behavior. Please note that blocking inside your actors is not something
+        that should be done under normal circumstances. In this case, however, it simulates exactly what we need, a
+        service that does not respond to our
         requests, and does not handle new requests in the mean time. A nice side-effect is that the queued messages
         prevent the swap message from being handled, an indication that us sending the service messages impedes it from
         recovering.
@@ -61,10 +62,10 @@
     </p>
 
     <p>
-        We defined a <code>main</code> method in the <a href="#code/src/main/java/Main.java"
+        We defined a <code>main</code> method in the <a href="#code/src/main/java/com/tngtech/akka/Main.java"
                                                         class="shortcut">Main.java</a> class. It creates an actor
-        system, and the service actor, before setting up a regular <code>Task</code> message that will be sent every 200
-        milliseconds. Then we wait for 10 seconds, before shutting everything down. Thanks to the log statements in the
+        system, and the service actor, as well as a <code>TaskCreator</code> actor, that will create the <code>Tasks</code>. To do this we set up a regular <code>Tick</code> message that will be sent every 200
+        milliseconds and triggers creation of tasks. Then we wait for 10 seconds, before shutting everything down. Thanks to the log statements in the
         actor we can observe what happens when we execute the <a href="#run" class="shortcut">program</a>. Each <code>Task</code>
         message receives incremented ids, so we can follow the messages in the log.
     </p>
@@ -87,7 +88,7 @@
 
     <p>
         Let us tackle the problem using a circuit breaker. The relevant code can be found in <a
-            href="#code/src/main/java/SimpleCircuitBreaker.java" class="shortcut">SimpleCircuitBreaker.java</a>.
+            href="#code/src/main/java/com/tngtech/akka/SimpleCircuitBreaker.java" class="shortcut">SimpleCircuitBreaker.java</a>.
     </p>
 
     <p>
@@ -125,8 +126,8 @@
         Now, take a look at lines 61-67 to see how to send messages to the service using the circuit breaker. The
         circuit breaker
         provides two modes of operation, callWithCircuitBreaker will make the call asynchronously and return a future
-        containing the result of the call, while callWithSyncCircuitBreaker allows you to perform a synchronous call. As
-        you are fully aware, performing synchronous calls inside of actors can be problematic, so we will use the
+        containing the result of the call, while callWithSyncCircuitBreaker allows you to perform a synchronous call. We
+        will use the
         asynchronous method here. The method expects a callable object as parameter, which we will declare anonymously
         at this point. The callable needs to return a <code>Future&lt;Object&gt;</code>. This makes it very natural to
         combine the circuit breaker with the <code>Ask</code> Pattern, since it returns
@@ -136,7 +137,8 @@
     </p>
 
     <p>
-        Time to run the example. Go to the <a href="#code/src/main/java/Main.java" class="shortcut">Main.java</a> class
+        Time to run the example. Go to the <a href="#code/src/main/java/com/tngtech/akka/Main.java" class="shortcut">Main.java</a>
+        class
         and comment line 13, while uncommenting line 14,
     <pre><code>system.actorOf( SimpleCircuitBreaker.props(), "SimpleCircuitBreaker" );</code></pre>
     Once you've done this, click <code>Save</code> and switch to the <a
@@ -168,7 +170,9 @@
         decide if
         the call failed or succeeded, the call will not be interrupted after the timeout. This is useful when you want
         to get the result, but it means that the circuit breaker will open only after the call finishes. Try setting the
-        ask timeout to a higher value in the code (e.g. <code>500</code>), and see what happens.
+        ask timeout to a higher value in the code (e.g. <code>500</code>), and see what happens. This is not the
+        intended behavior, and a <a href="https://github.com/akka/akka/issues/13950">issue</a> is open for this.
+
     </p>
 
     <p>
@@ -212,7 +216,7 @@
     <h2>The persisting circuit breaker</h2>
 
     <p>
-        Take a look at <a href="#code/src/main/java/PersistingCircuitBreaker.java" class="shortcut">PersistingCircuitBreaker.java</a>
+        Take a look at <a href="#code/src/main/java/com/tngtech/akka/PersistingCircuitBreaker.java" class="shortcut">PersistingCircuitBreaker.java</a>
         The <code>PersistingCircuitBreaker</code> actor creates the channel in line 28. Channels come with a
         ChannelSettings class that can be used to modify the channel behavior, and comes with a nice fluent Java API. In
         this case, we set the redelivery to 1 second. We also create a circuit breaker actor, that is basically equal to
@@ -242,7 +246,7 @@
 <div>
     <h2>Running the example</h2>
 
-    <p>Go to the <a href="#code/src/main/java/Main.java" class="shortcut">Main.java</a> class
+    <p>Go to the <a href="#code/src/main/java/com/tngtech/akka/Main.java" class="shortcut">Main.java</a> class
         and comment line 14, while uncommenting line 15,
     <pre><code>system.actorOf( PersistingCircuitBreaker.props(), "PersistingCircuitBreaker" );</code></pre>
     Once you've done this, click <code>Save</code> and switch to the <a
@@ -259,16 +263,49 @@
         Usually you will want to use PersistentChannel instead of Channel. In addition to providing at-least-once
         delivery, PersistentChannel will persist all messages to disk, thus making sure that the messages will be
         replayed after a JVM crash or similar unfortunate incidents. In order to achieve this, go to <a
-            href="#code/src/main/java/PersistingCircuitBreaker.java" class="shortcut">PersistingCircuitBreaker.java</a>
-        and lines 33-41 in
-        the constructor and comment or remove lines 28-31.
+            href="#code/src/main/java/com/tngtech/akka/PersistingCircuitBreaker.java" class="shortcut">PersistingCircuitBreaker.java</a>
+        and lines 35-43 in the constructor and comment or remove lines 31-34.
         When running the example now you will not see much difference. However, running it a second time you will notice
-        that the run does not start with Task 0, instead it starts with tasks that were not
-        delivered in the last run.
+        that the run does not start with Task 0, instead it starts with tasks that were not delivered in the last run.
     </p>
 
     <p>
-        Persistent Channels offer a number of settings. Two of those are very interesting in our context, pending
+        There is a problem with this solution though. If the channel fails to persist the message, the message can get
+        lost without the sender ever noticing. There is a way to solve this problem. The settings of the
+        PersistentChannel allow to set a mode in which a persistence confirmation will be sent, i.e. if the channel was
+        successful in persisting the message, the <code>Persistent</code> will be sent to the sender, if not a <code>PersistenceFailure</code>
+        message will be sent, containing the message and cause of failure. Let us take a look at what is necessary to
+        ensure that our messages were persisted.
+    </p>
+
+    <p>
+        First we need to enable the setting. To do this, change the PersistentChannelSettings. In line 38, change the
+        value from <code>false</code> to <code>true</code>. Next we will need some logic to handle the channel messages.
+        One possibility is to include this into the sender of the messages. If anyone can deal with such problems, it
+        will be the sender. If the original message was created by user input, the sender could return a meaningful
+        error message to the user, deactivate sending messages or just skip the persistent channel. When the only thing
+        you want to do in such a case is logging such an error, the logic can be encapsulated in an actor of its own.
+    </p>
+
+    <p>
+        Starting at line 143 you will find an actor to do this.  This actor will be used as the sender
+        for messages to the channel. As such it also needs to deal with the responses, and therefore needs to know the
+        original sender of our <code>Tasks</code>. Therefore we create the actor as a temporary actor, which will be
+        created for each single message. This way we can also easily set a timeout in case persistence takes too long.
+    </p>
+
+    <p>
+        You can just uncomment the actor, and also include the lines 55-56, while commenting line 53. Running now you
+        should see no difference. You can change the log level of the successfully persisted messages in line 167 to see
+        that
+        the confirmations are sent. Provoking a failure is hard, Akka Persistance is pretty resilient. The files used by
+        Akka Persistence are in the journal folder, you can try to change permissions, delete files or other nasty
+        stuff. During my testing everything continued to work.
+    </p>
+
+    <p>
+        Persistent Channels offer a number of other settings as well. Two of those are very interesting in our context,
+        pending
         confirmations max and min. With those two values the channel can be stopped from sending further messages if a
         certain number of messages is not yet confirmed. The min value allows to set a value at which sending will be
         resumed.
@@ -283,7 +320,7 @@
     <p>
         The last step is to see how well we can make it work using only persistent channel. Take a look at the code in
         <a
-                href="#code/src/main/java/PersistingChannelLimiter.java"
+                href="#code/src/main/java/com/tngtech/akka/PersistingChannelLimiter.java"
                 class="shortcut">PersistingChannelLimiter.java</a>. You will note that it contains two other actors.
         First the <code>PersistentReceiver</code>. This is the actor the <code>Tasks</code> are sent to through the
         channel. The receiver creates
@@ -300,7 +337,8 @@
     </p>
 
     <p>
-        If we use this solution in our <a href="#code/src/main/java/Main.java" class="shortcut">Main.java</a> method, we
+        If we use this solution in our <a href="#code/src/main/java/com/tngtech/akka/Main.java" class="shortcut">Main.java</a>
+        method, we
         see that the output is nearly
         perfect, all messages are
         delivered, only two messages are delivered to the service once it stops being responsive. This approach works
@@ -333,7 +371,7 @@
 
     <p>
         We hope you had fun going through this template with us. Any issues, feedback or questions can be given using
-        the GitHub page of this template.
+        the <a href="http://www.github.com/TNG/">GitHub page</a> of this template.
     </p>
 
     <p>
@@ -342,3 +380,4 @@
 </div>
 </body>
 </html>
+

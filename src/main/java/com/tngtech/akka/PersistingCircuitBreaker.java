@@ -1,3 +1,5 @@
+package com.tngtech.akka;
+
 import akka.actor.ActorRef;
 import akka.actor.Props;
 import akka.actor.UntypedActor;
@@ -13,6 +15,7 @@ import scala.concurrent.Future;
 import scala.concurrent.duration.Duration;
 import scala.concurrent.duration.FiniteDuration;
 
+import java.io.Serializable;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
@@ -20,12 +23,12 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
 
   private final ActorRef circuitBreaker;
 
-  public static Props props() {
-    return Props.create( PersistingCircuitBreaker.class );
+  public static Props props( Props serviceProps ) {
+    return Props.create( PersistingCircuitBreaker.class, serviceProps );
   }
 
-  public PersistingCircuitBreaker() {
-    circuitBreaker = getContext().actorOf( CircuitBreakerPersistentActor.props(), "CircuitBreaker" );
+  public PersistingCircuitBreaker( Props serviceProps ) {
+    circuitBreaker = getContext().actorOf( CircuitBreakerPersistentActor.props( serviceProps ), "CircuitBreaker" );
   }
 
   @Override
@@ -61,7 +64,7 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
       deliver( circuitBreaker.path(), new Function<Long, Object>() {
         @Override
         public Object apply( Long deliveryId ) throws Exception {
-          return new DeliverTask(deliveryId, task);
+          return new DeliverTask( deliveryId, task );
         }
       } );
     } else if (event instanceof DeliveryConfirmation) {
@@ -82,11 +85,11 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
     private final ActorRef service;
     private final CircuitBreaker circuitBreaker;
 
-    public static Props props() {
-      return Props.create( CircuitBreakerPersistentActor.class );
+    public static Props props( Props serviceProps ) {
+      return Props.create( CircuitBreakerPersistentActor.class, serviceProps );
     }
 
-    public CircuitBreakerPersistentActor() {
+    public CircuitBreakerPersistentActor( Props serviceProps ) {
       circuitBreaker = new CircuitBreaker( getContext().dispatcher(),
                                            getContext().system().scheduler(),
                                            MAX_FAILURES,
@@ -110,7 +113,7 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
             }
           } );
 
-      service = getContext().actorOf( Service.props(), "Service" );
+      service = getContext().actorOf( serviceProps, "Service" );
     }
 
     @Override
@@ -149,7 +152,7 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
 
   }
 
-  public static class TaskEnvelope {
+  public static class TaskEnvelope implements Serializable{
     private Service.Task task;
     private ActorRef sender;
 
@@ -159,7 +162,7 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
     }
   }
 
-  public static class DeliverTask {
+  public static class DeliverTask  implements Serializable{
     private Long id;
     private TaskEnvelope envelope;
 
@@ -169,7 +172,7 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
     }
   }
 
-  public static class DeliveryConfirmation {
+  public static class DeliveryConfirmation implements Serializable{
     private Long id;
     private ActorRef originalSender;
     private Object response;

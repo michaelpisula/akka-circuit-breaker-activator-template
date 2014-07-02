@@ -1,8 +1,11 @@
+package com.tngtech.akka;
+
 import akka.actor.*;
 import akka.event.Logging;
 import akka.event.LoggingAdapter;
 import akka.pattern.CircuitBreaker;
 import akka.pattern.Patterns;
+import akka.util.Timeout;
 import scala.concurrent.Future;
 import scala.concurrent.duration.Duration;
 import scala.concurrent.duration.FiniteDuration;
@@ -15,18 +18,18 @@ public class SimpleCircuitBreaker extends UntypedActor {
   private LoggingAdapter log = Logging.getLogger( getContext().system(), this );
 
   public static final int MAX_FAILURES = 2;
-  public static final int ASK_TIMEOUT = 100;
+  public static final Timeout ASK_TIMEOUT = Timeout.durationToTimeout(Duration.create( 100, TimeUnit.MILLISECONDS ));
   public static final FiniteDuration CALL_TIMEOUT = Duration.create( 100, TimeUnit.MILLISECONDS );
   public static final FiniteDuration RESET_TIMEOUT = Duration.create( 2, TimeUnit.SECONDS );
 
   private final ActorRef service;
   private final CircuitBreaker circuitBreaker;
 
-  public static Props props() {
-    return Props.create( SimpleCircuitBreaker.class );
+  public static Props props(Props serviceProps) {
+    return Props.create( SimpleCircuitBreaker.class, serviceProps );
   }
 
-  public SimpleCircuitBreaker() {
+  public SimpleCircuitBreaker(Props serviceProps) {
     circuitBreaker = new CircuitBreaker( getContext().dispatcher(),
                                          getContext().system().scheduler(),
                                          MAX_FAILURES,
@@ -50,21 +53,20 @@ public class SimpleCircuitBreaker extends UntypedActor {
           }
         } );
 
-    service = getContext().actorOf( Service.props(), "Service" );
+    service = getContext().actorOf( serviceProps, "Service" );
   }
 
   @Override
   public void onReceive( Object message ) throws Exception {
     if ( message instanceof Service.Task ) {
       final Service.Task task = (Service.Task) message;
-      ActorRef sender = getSender();
       Future<Object> cbFuture = circuitBreaker.callWithCircuitBreaker( new Callable<Future<Object>>() {
         @Override
         public Future<Object> call() throws Exception {
           return Patterns.ask( service, task, ASK_TIMEOUT );
         }
       } );
-      Patterns.pipe( cbFuture, getContext().system().dispatcher() ).to( sender );
+      Patterns.pipe( cbFuture, getContext().system().dispatcher() ).to( getSender() );
     }
   }
 
