@@ -4,6 +4,7 @@ import akka.actor.ActorRef;
 import akka.actor.Props;
 import akka.actor.ReceiveTimeout;
 import akka.actor.UntypedActor;
+import akka.dispatch.OnSuccess;
 import akka.event.Logging;
 import akka.event.LoggingAdapter;
 import akka.japi.JavaPartialFunction;
@@ -111,12 +112,10 @@ public class PersistingCircuitBreaker extends UntypedActor {
             @Override
             public Future<Object> call() throws Exception {
               Future<Object> response = Patterns.ask( service, task, ASK_TIMEOUT );
-              response.onSuccess( new JavaPartialFunction<Object, Object>() {
+              response.onSuccess( new OnSuccess<Object>() {
                 @Override
-                public Object apply( Object response, boolean isCheck ) throws Exception {
-
+                public void onSuccess( Object response ) throws Exception {
                   confirmablePersistent.confirm();
-                  return response;
                 }
 
               }, getContext().system().dispatcher() );

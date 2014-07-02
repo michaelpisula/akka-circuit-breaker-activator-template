@@ -16,9 +16,9 @@ public class Main {
     ActorSystem system = ActorSystem.create();
 
     Props serviceProps = Service.props();
-    final ActorRef service = system.actorOf( serviceProps, "Service" );
+    //final ActorRef service = system.actorOf( serviceProps, "Service" );
     //final ActorRef service = system.actorOf( SimpleCircuitBreaker.props(serviceProps), "SimpleCircuitBreaker" );
-    //final ActorRef service = system.actorOf( PersistingCircuitBreaker.props(serviceProps), "PersistingCircuitBreaker" );
+    final ActorRef service = system.actorOf( PersistingCircuitBreaker.props(serviceProps), "PersistingCircuitBreaker" );
     //    final ActorRef service = system.actorOf( PersistingChannelLimiter.props(serviceProps), "PersistingChannelLimiter" );
 
     ActorRef taskCreator = system.actorOf( TaskCreator.props( service ) );
