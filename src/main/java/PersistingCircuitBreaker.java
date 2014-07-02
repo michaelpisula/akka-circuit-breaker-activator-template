@@ -4,10 +4,11 @@ import akka.actor.UntypedActor;
 import akka.dispatch.Mapper;
 import akka.event.Logging;
 import akka.event.LoggingAdapter;
+import akka.japi.Function;
+import akka.japi.Procedure;
 import akka.pattern.CircuitBreaker;
 import akka.pattern.Patterns;
-import akka.persistence.*;
-import scala.Option;
+import akka.persistence.UntypedPersistentActorWithAtLeastOnceDelivery;
 import scala.concurrent.Future;
 import scala.concurrent.duration.Duration;
 import scala.concurrent.duration.FiniteDuration;
@@ -15,9 +16,8 @@ import scala.concurrent.duration.FiniteDuration;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
-public class PersistingCircuitBreaker extends UntypedActor {
+public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastOnceDelivery {
 
-  private final ActorRef channel;
   private final ActorRef circuitBreaker;
 
   public static Props props() {
@@ -25,29 +25,48 @@ public class PersistingCircuitBreaker extends UntypedActor {
   }
 
   public PersistingCircuitBreaker() {
-    channel = getContext().actorOf( Channel.props( ChannelSettings
-                                                       .create()
-                                                       .withRedeliverInterval( Duration.create( 1, TimeUnit.SECONDS )
-                                                      ) ), "Channel" );
-    /*
-    PersistentChannelSettings channelSettings =
-        new PersistentChannelSettings( 5, Duration.create( 1, TimeUnit.SECONDS ),
-                                       Option.<ActorRef>empty(),
-                                       false,
-                                       50,
-                                       50,
-                                       Duration.create( 4, TimeUnit.SECONDS )
-        );
-    channel = getContext().actorOf( PersistentChannel.props( channelSettings ) );
-    */
     circuitBreaker = getContext().actorOf( CircuitBreakerPersistentActor.props(), "CircuitBreaker" );
   }
 
   @Override
-  public void onReceive( Object message ) throws Exception {
+  public void onReceiveRecover( Object message ) throws Exception {
+    updateState(message);
+  }
+
+  @Override
+  public void onReceiveCommand( Object message ) throws Exception {
     if ( message instanceof Service.Task ) {
       Service.Task task = (Service.Task) message;
-      channel.tell( Deliver.create( Persistent.create( task ), circuitBreaker.path() ), getSender() );
+      persist( new TaskEnvelope( task, getSender()), new Procedure<TaskEnvelope>() {
+        @Override
+        public void apply( TaskEnvelope task ) throws Exception {
+          updateState( task );
+        }
+      } );
+    } else if (message instanceof DeliveryConfirmation) {
+      DeliveryConfirmation confirmation = (DeliveryConfirmation) message;
+      persist(confirmation, new Procedure<DeliveryConfirmation>() {
+        @Override
+        public void apply( DeliveryConfirmation conf ) throws Exception {
+          conf.originalSender.tell( conf.response, getSelf() );
+          updateState( conf );
+        }
+      });
+    }
+  }
+
+  private void updateState( Object event ) {
+    if ( event instanceof TaskEnvelope ) {
+      final TaskEnvelope task = (TaskEnvelope) event;
+      deliver( circuitBreaker.path(), new Function<Long, Object>() {
+        @Override
+        public Object apply( Long deliveryId ) throws Exception {
+          return new DeliverTask(deliveryId, task);
+        }
+      } );
+    } else if (event instanceof DeliveryConfirmation) {
+      DeliveryConfirmation confirmation = (DeliveryConfirmation) event;
+      confirmDelivery( confirmation.id );
     }
   }
 
@@ -96,26 +115,23 @@ public class PersistingCircuitBreaker extends UntypedActor {
 
     @Override
     public void onReceive( Object message ) throws Exception {
-      if ( message instanceof ConfirmablePersistent ) {
-        final ConfirmablePersistent confirmablePersistent = (ConfirmablePersistent) message;
-        Object payload = confirmablePersistent.payload();
-        if ( payload instanceof Service.Task ) {
-          final Service.Task task = (Service.Task) payload;
-          ActorRef sender = getSender();
-          Future<Object> cbFuture = circuitBreaker.callWithCircuitBreaker( new Callable<Future<Object>>() {
-            @Override
-            public Future<Object> call() throws Exception {
-              return Patterns.ask( service, task, ASK_TIMEOUT ).map( new Mapper<Object, Object>() {
-                @Override
-                public Object apply( Object response ) {
-                  confirmablePersistent.confirm();
-                  return response;
-                }
-              }, getContext().system().dispatcher() );
-            }
-          } );
-          Patterns.pipe( cbFuture, getContext().system().dispatcher() ).to( sender );
-        }
+      if ( message instanceof DeliverTask ) {
+        final DeliverTask deliverTask = (DeliverTask) message;
+        final Service.Task task = deliverTask.envelope.task;
+        ActorRef sender = getSender();
+        Future<Object> cbFuture = circuitBreaker.callWithCircuitBreaker( new Callable<Future<Object>>() {
+          @Override
+          public Future<Object> call() throws Exception {
+            return Patterns.ask( service, task, ASK_TIMEOUT ).map( new Mapper<Object, Object>() {
+              @Override
+              public Object apply( Object response ) {
+                  return new DeliveryConfirmation( deliverTask.id, deliverTask.envelope.sender, response );
+              }
+            }, getContext().system().dispatcher() );
+          }
+        } );
+        Patterns.pipe( cbFuture, getContext().system().dispatcher() ).to( sender );
+
       }
     }
 
@@ -131,6 +147,38 @@ public class PersistingCircuitBreaker extends UntypedActor {
       log.info( "Circuit Breaker is half open, next message will go through" );
     }
 
+  }
+
+  public static class TaskEnvelope {
+    private Service.Task task;
+    private ActorRef sender;
+
+    public TaskEnvelope( Service.Task task, ActorRef sender ) {
+      this.task = task;
+      this.sender = sender;
+    }
+  }
+
+  public static class DeliverTask {
+    private Long id;
+    private TaskEnvelope envelope;
+
+    public DeliverTask( Long id, TaskEnvelope envelope ) {
+      this.id = id;
+      this.envelope = envelope;
+    }
+  }
+
+  public static class DeliveryConfirmation {
+    private Long id;
+    private ActorRef originalSender;
+    private Object response;
+
+    public DeliveryConfirmation( Long id, ActorRef originalSender, Object response ) {
+      this.id = id;
+      this.originalSender = originalSender;
+      this.response = response;
+    }
   }
 
 }
