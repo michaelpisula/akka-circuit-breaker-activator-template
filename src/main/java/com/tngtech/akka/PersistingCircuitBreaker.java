@@ -10,6 +10,7 @@ import akka.japi.Function;
 import akka.japi.Procedure;
 import akka.pattern.CircuitBreaker;
 import akka.pattern.Patterns;
+import akka.persistence.PersistenceFailure;
 import akka.persistence.UntypedPersistentActorWithAtLeastOnceDelivery;
 import scala.concurrent.Future;
 import scala.concurrent.duration.Duration;
@@ -20,6 +21,8 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
 public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastOnceDelivery {
+  private LoggingAdapter log = Logging.getLogger( getContext().system(), this );
+  private static final String name= "CircuitBreakerPersister";
 
   private final ActorRef circuitBreaker;
 
@@ -28,7 +31,17 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
   }
 
   public PersistingCircuitBreaker( Props serviceProps ) {
-    circuitBreaker = getContext().actorOf( CircuitBreakerPersistentActor.props( serviceProps ), "CircuitBreaker" );
+    circuitBreaker = getContext().actorOf( CircuitBreakerActor.props( serviceProps ), CircuitBreakerActor.name );
+  }
+
+  @Override
+  public FiniteDuration redeliverInterval() {
+    return Duration.create( 1, TimeUnit.SECONDS );
+  }
+
+  @Override
+  public String persistenceId() {
+    return name;
   }
 
   @Override
@@ -55,6 +68,9 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
           updateState( conf );
         }
       });
+    } else if (message instanceof PersistenceFailure) {
+      PersistenceFailure failure = ((PersistenceFailure) message);
+      log.error(failure.cause(), "Persisting failed for message {}", failure.payload());
     }
   }
 
@@ -69,12 +85,12 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
       } );
     } else if (event instanceof DeliveryConfirmation) {
       DeliveryConfirmation confirmation = (DeliveryConfirmation) event;
-      confirmDelivery( confirmation.id );
+      confirmDelivery( confirmation.deliveryId );
     }
   }
 
-  public static class CircuitBreakerPersistentActor extends UntypedActor {
-
+  public static class CircuitBreakerActor extends UntypedActor {
+    private static final String name= "CircuitBreaker";
     private LoggingAdapter log = Logging.getLogger( getContext().system(), this );
 
     public static final int MAX_FAILURES = 2;
@@ -86,10 +102,10 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
     private final CircuitBreaker circuitBreaker;
 
     public static Props props( Props serviceProps ) {
-      return Props.create( CircuitBreakerPersistentActor.class, serviceProps );
+      return Props.create( CircuitBreakerActor.class, serviceProps );
     }
 
-    public CircuitBreakerPersistentActor( Props serviceProps ) {
+    public CircuitBreakerActor( Props serviceProps ) {
       circuitBreaker = new CircuitBreaker( getContext().dispatcher(),
                                            getContext().system().scheduler(),
                                            MAX_FAILURES,
@@ -134,7 +150,6 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
           }
         } );
         Patterns.pipe( cbFuture, getContext().system().dispatcher() ).to( sender );
-
       }
     }
 
@@ -173,12 +188,12 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
   }
 
   public static class DeliveryConfirmation implements Serializable{
-    private Long id;
+    private Long deliveryId;
     private ActorRef originalSender;
     private Object response;
 
-    public DeliveryConfirmation( Long id, ActorRef originalSender, Object response ) {
-      this.id = id;
+    public DeliveryConfirmation( Long deliveryId, ActorRef originalSender, Object response ) {
+      this.deliveryId = deliveryId;
       this.originalSender = originalSender;
       this.response = response;
     }
