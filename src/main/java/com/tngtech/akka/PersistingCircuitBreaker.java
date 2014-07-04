@@ -146,10 +146,10 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
               public Object apply( Object response ) {
                   return new DeliveryConfirmation( deliverTask.id, deliverTask.envelope.sender, response );
               }
-            }, getContext().system().dispatcher() );
+            }, getContext().dispatcher() );
           }
         } );
-        Patterns.pipe( cbFuture, getContext().system().dispatcher() ).to( sender );
+        Patterns.pipe( cbFuture, getContext().dispatcher() ).to( sender );
       }
     }
 
