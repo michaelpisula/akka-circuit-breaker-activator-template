@@ -20,7 +20,7 @@ public class Main {
     //final ActorRef service = system.actorOf( SimpleCircuitBreaker.props(serviceProps), "SimpleCircuitBreaker" );
     //final ActorRef service = system.actorOf( PersistingCircuitBreaker.props(serviceProps), "PersistingCircuitBreaker" );
 
-    ActorRef taskCreator = system.actorOf( TaskCreator.props( service ),"TaskCreator" );
+    ActorRef taskCreator = system.actorOf( TaskCreator.props( service ), "TaskCreator" );
 
     system.scheduler().schedule( Duration.create( 0, TimeUnit.SECONDS ),
                                  Duration.create( 200, TimeUnit.MILLISECONDS ), taskCreator, new Tick(),

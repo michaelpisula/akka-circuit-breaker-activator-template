@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit;
 
 public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastOnceDelivery {
   private LoggingAdapter log = Logging.getLogger( getContext().system(), this );
-  private static final String name= "CircuitBreakerPersister";
+  private static final String name = "CircuitBreakerPersister";
 
   private final ActorRef circuitBreaker;
 
@@ -46,31 +46,31 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
 
   @Override
   public void onReceiveRecover( Object message ) throws Exception {
-    updateState(message);
+    updateState( message );
   }
 
   @Override
   public void onReceiveCommand( Object message ) throws Exception {
     if ( message instanceof Service.Task ) {
       Service.Task task = (Service.Task) message;
-      persist( new TaskEnvelope( task, getSender()), new Procedure<TaskEnvelope>() {
+      persist( new TaskEnvelope( task, getSender() ), new Procedure<TaskEnvelope>() {
         @Override
         public void apply( TaskEnvelope task ) throws Exception {
           updateState( task );
         }
       } );
-    } else if (message instanceof DeliveryConfirmation) {
+    } else if ( message instanceof DeliveryConfirmation ) {
       DeliveryConfirmation confirmation = (DeliveryConfirmation) message;
-      persist(confirmation, new Procedure<DeliveryConfirmation>() {
+      persist( confirmation, new Procedure<DeliveryConfirmation>() {
         @Override
         public void apply( DeliveryConfirmation conf ) throws Exception {
           conf.originalSender.tell( conf.response, getSelf() );
           updateState( conf );
         }
-      });
-    } else if (message instanceof PersistenceFailure) {
+      } );
+    } else if ( message instanceof PersistenceFailure ) {
       PersistenceFailure failure = ((PersistenceFailure) message);
-      log.error(failure.cause(), "Persisting failed for message {}", failure.payload());
+      log.error( failure.cause(), "Persisting failed for message {}", failure.payload() );
     }
   }
 
@@ -83,14 +83,14 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
           return new DeliverTask( deliveryId, task );
         }
       } );
-    } else if (event instanceof DeliveryConfirmation) {
+    } else if ( event instanceof DeliveryConfirmation ) {
       DeliveryConfirmation confirmation = (DeliveryConfirmation) event;
       confirmDelivery( confirmation.deliveryId );
     }
   }
 
   public static class CircuitBreakerActor extends UntypedActor {
-    private static final String name= "CircuitBreaker";
+    private static final String name = "CircuitBreaker";
     private LoggingAdapter log = Logging.getLogger( getContext().system(), this );
 
     public static final int MAX_FAILURES = 2;
@@ -144,7 +144,7 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
             return Patterns.ask( service, task, ASK_TIMEOUT ).map( new Mapper<Object, Object>() {
               @Override
               public Object apply( Object response ) {
-                  return new DeliveryConfirmation( deliverTask.id, deliverTask.envelope.sender, response );
+                return new DeliveryConfirmation( deliverTask.id, deliverTask.envelope.sender, response );
               }
             }, getContext().dispatcher() );
           }
@@ -167,7 +167,7 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
 
   }
 
-  public static class TaskEnvelope implements Serializable{
+  public static class TaskEnvelope implements Serializable {
     private Service.Task task;
     private ActorRef sender;
 
@@ -177,7 +177,7 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
     }
   }
 
-  public static class DeliverTask  implements Serializable{
+  public static class DeliverTask implements Serializable {
     private Long id;
     private TaskEnvelope envelope;
 
@@ -187,7 +187,7 @@ public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastO
     }
   }
 
-  public static class DeliveryConfirmation implements Serializable{
+  public static class DeliveryConfirmation implements Serializable {
     private Long deliveryId;
     private ActorRef originalSender;
     private Object response;
