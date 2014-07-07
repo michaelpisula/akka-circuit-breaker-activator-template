@@ -2,25 +2,29 @@ package com.tngtech.akka;
 
 import akka.actor.ActorRef;
 import akka.actor.Props;
-import akka.actor.ReceiveTimeout;
 import akka.actor.UntypedActor;
-import akka.dispatch.OnSuccess;
+import akka.dispatch.Mapper;
 import akka.event.Logging;
 import akka.event.LoggingAdapter;
-import akka.japi.JavaPartialFunction;
+import akka.japi.Function;
+import akka.japi.Procedure;
 import akka.pattern.CircuitBreaker;
 import akka.pattern.Patterns;
-import akka.persistence.*;
+import akka.persistence.PersistenceFailure;
+import akka.persistence.UntypedPersistentActorWithAtLeastOnceDelivery;
+import akka.util.Timeout;
 import scala.concurrent.Future;
 import scala.concurrent.duration.Duration;
 import scala.concurrent.duration.FiniteDuration;
 
+import java.io.Serializable;
 import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 
-public class PersistingCircuitBreaker extends UntypedActor {
+public class PersistingCircuitBreaker extends UntypedPersistentActorWithAtLeastOnceDelivery {
   private LoggingAdapter log = Logging.getLogger( getContext().system(), this );
-  private final ActorRef channel;
+  private static final String name = "CircuitBreakerPersister";
+
   private final ActorRef circuitBreaker;
 
   public static Props props( Props serviceProps ) {
@@ -28,41 +32,70 @@ public class PersistingCircuitBreaker extends UntypedActor {
   }
 
   public PersistingCircuitBreaker( Props serviceProps ) {
-    channel = getContext().actorOf( Channel.props( ChannelSettings
-                                                       .create()
-                                                       .withRedeliverInterval( Duration.create( 1, TimeUnit.SECONDS )
-                                                       ) ), "Channel" );
-/*    PersistentChannelSettings channelSettings =
-        new PersistentChannelSettings( 5, Duration.create( 1, TimeUnit.SECONDS ),
-                                       Option.<ActorRef>empty(),
-                                       true,
-                                       50,
-                                       50,
-                                       Duration.create( 4, TimeUnit.SECONDS )
-        );
-    channel = getContext().actorOf( PersistentChannel.props( channelSettings ) );
-        */
-
-    circuitBreaker = getContext().actorOf( CircuitBreakerPersistentActor.props( serviceProps ), "CircuitBreaker" );
+    circuitBreaker = getContext().actorOf( CircuitBreakerActor.props( serviceProps ), CircuitBreakerActor.name );
   }
 
   @Override
-  public void onReceive( Object message ) throws Exception {
+  public FiniteDuration redeliverInterval() {
+    return Duration.create( 1, TimeUnit.SECONDS );
+  }
+
+  @Override
+  public String persistenceId() {
+    return name;
+  }
+
+  @Override
+  public void onReceiveRecover( Object message ) throws Exception {
+    updateState( message );
+  }
+
+  @Override
+  public void onReceiveCommand( Object message ) throws Exception {
     if ( message instanceof Service.Task ) {
       Service.Task task = (Service.Task) message;
-      channel.tell( Deliver.create( Persistent.create( task ), circuitBreaker.path() ), getSender() );
-
-      //      ActorRef failureHandler = getContext().actorOf( PersistanceResultHandler.props( getSender() ) );
-      //      channel.tell( Deliver.create( Persistent.create( task ), circuitBreaker.path() ), failureHandler );
+      persist( new TaskEnvelope( task, getSender() ), new Procedure<TaskEnvelope>() {
+        @Override
+        public void apply( TaskEnvelope task ) throws Exception {
+          updateState( task );
+        }
+      } );
+    } else if ( message instanceof DeliveryConfirmation ) {
+      DeliveryConfirmation confirmation = (DeliveryConfirmation) message;
+      persist( confirmation, new Procedure<DeliveryConfirmation>() {
+        @Override
+        public void apply( DeliveryConfirmation conf ) throws Exception {
+          conf.originalSender.tell( conf.response, getSelf() );
+          updateState( conf );
+        }
+      } );
+    } else if ( message instanceof PersistenceFailure ) {
+      PersistenceFailure failure = ((PersistenceFailure) message);
+      log.error( failure.cause(), "Persisting failed for message {}", failure.payload() );
     }
   }
 
-  public static class CircuitBreakerPersistentActor extends UntypedActor {
+  private void updateState( Object event ) {
+    if ( event instanceof TaskEnvelope ) {
+      final TaskEnvelope task = (TaskEnvelope) event;
+      deliver( circuitBreaker.path(), new Function<Long, Object>() {
+        @Override
+        public Object apply( Long deliveryId ) throws Exception {
+          return new DeliverTask( deliveryId, task );
+        }
+      } );
+    } else if ( event instanceof DeliveryConfirmation ) {
+      DeliveryConfirmation confirmation = (DeliveryConfirmation) event;
+      confirmDelivery( confirmation.deliveryId );
+    }
+  }
 
+  public static class CircuitBreakerActor extends UntypedActor {
+    private static final String name = "CircuitBreaker";
     private LoggingAdapter log = Logging.getLogger( getContext().system(), this );
 
     public static final int MAX_FAILURES = 2;
-    public static final int ASK_TIMEOUT = 100;
+    public static final Timeout ASK_TIMEOUT = Timeout.apply(  100, TimeUnit.MILLISECONDS );
     public static final FiniteDuration CALL_TIMEOUT = Duration.create( 100, TimeUnit.MILLISECONDS );
     public static final FiniteDuration RESET_TIMEOUT = Duration.create( 2, TimeUnit.SECONDS );
 
@@ -70,10 +103,10 @@ public class PersistingCircuitBreaker extends UntypedActor {
     private final CircuitBreaker circuitBreaker;
 
     public static Props props( Props serviceProps ) {
-      return Props.create( CircuitBreakerPersistentActor.class, serviceProps );
+      return Props.create( CircuitBreakerActor.class, serviceProps );
     }
 
-    public CircuitBreakerPersistentActor( Props serviceProps ) {
+    public CircuitBreakerActor( Props serviceProps ) {
       circuitBreaker = new CircuitBreaker( getContext().dispatcher(),
                                            getContext().system().scheduler(),
                                            MAX_FAILURES,
@@ -102,28 +135,22 @@ public class PersistingCircuitBreaker extends UntypedActor {
 
     @Override
     public void onReceive( Object message ) throws Exception {
-      if ( message instanceof ConfirmablePersistent ) {
-        final ConfirmablePersistent confirmablePersistent = (ConfirmablePersistent) message;
-        Object payload = confirmablePersistent.payload();
-        if ( payload instanceof Service.Task ) {
-          final Service.Task task = (Service.Task) payload;
-          ActorRef sender = getSender();
-          Future<Object> cbFuture = circuitBreaker.callWithCircuitBreaker( new Callable<Future<Object>>() {
-            @Override
-            public Future<Object> call() throws Exception {
-              Future<Object> response = Patterns.ask( service, task, ASK_TIMEOUT );
-              response.onSuccess( new OnSuccess<Object>() {
-                @Override
-                public void onSuccess( Object response ) throws Exception {
-                  confirmablePersistent.confirm();
-                }
-
-              }, getContext().system().dispatcher() );
-              return response;
-            }
-          } );
-          Patterns.pipe( cbFuture, getContext().system().dispatcher() ).to( sender );
-        }
+      if ( message instanceof DeliverTask ) {
+        final DeliverTask deliverTask = (DeliverTask) message;
+        final Service.Task task = deliverTask.envelope.task;
+        ActorRef sender = getSender();
+        Future<Object> cbFuture = circuitBreaker.callWithCircuitBreaker( new Callable<Future<Object>>() {
+          @Override
+          public Future<Object> call() throws Exception {
+            return Patterns.ask( service, task, ASK_TIMEOUT ).map( new Mapper<Object, Object>() {
+              @Override
+              public Object apply( Object response ) {
+                return new DeliveryConfirmation( deliverTask.id, deliverTask.envelope.sender, response );
+              }
+            }, getContext().dispatcher() );
+          }
+        } );
+        Patterns.pipe( cbFuture, getContext().dispatcher() ).to( sender );
       }
     }
 
@@ -141,34 +168,35 @@ public class PersistingCircuitBreaker extends UntypedActor {
 
   }
 
-  public static class PersistanceResultHandler extends UntypedActor {
+  public static class TaskEnvelope implements Serializable {
+    private Service.Task task;
+    private ActorRef sender;
 
-    public static Props props( ActorRef originalSender ) {
-      return Props.create( PersistanceResultHandler.class, originalSender );
+    public TaskEnvelope( Service.Task task, ActorRef sender ) {
+      this.task = task;
+      this.sender = sender;
     }
+  }
 
-    private final ActorRef originalSender;
-    private LoggingAdapter log = Logging.getLogger( getContext().system(), this );
+  public static class DeliverTask implements Serializable {
+    private Long id;
+    private TaskEnvelope envelope;
 
-    public PersistanceResultHandler( ActorRef originalSender ) {
+    public DeliverTask( Long id, TaskEnvelope envelope ) {
+      this.id = id;
+      this.envelope = envelope;
+    }
+  }
+
+  public static class DeliveryConfirmation implements Serializable {
+    private Long deliveryId;
+    private ActorRef originalSender;
+    private Object response;
+
+    public DeliveryConfirmation( Long deliveryId, ActorRef originalSender, Object response ) {
+      this.deliveryId = deliveryId;
       this.originalSender = originalSender;
-      getContext().setReceiveTimeout( Duration.create( 5, TimeUnit.SECONDS ) );
-    }
-
-    @Override
-    public void onReceive( Object message ) throws Exception {
-      if ( message instanceof PersistenceFailure ) {
-        PersistenceFailure persistenceFailure = (PersistenceFailure) message;
-        log.error( "Message could not be persisted {} with cause {}", persistenceFailure.payload(),
-                   persistenceFailure.cause() );
-      } else if ( message instanceof Persistent ) {
-        log.debug( "Persistence is working" );
-      } else if ( message instanceof ReceiveTimeout ) {
-        log.error( "Persistence took too long, presuming failed" );
-      } else {
-        originalSender.tell( message, getSender() );
-      }
-      getContext().stop( getSelf() );
+      this.response = response;
     }
   }
 

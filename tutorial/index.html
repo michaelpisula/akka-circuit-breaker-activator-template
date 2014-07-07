@@ -64,8 +64,10 @@
     <p>
         We defined a <code>main</code> method in the <a href="#code/src/main/java/com/tngtech/akka/Main.java"
                                                         class="shortcut">Main.java</a> class. It creates an actor
-        system, and the service actor, as well as a <code>TaskCreator</code> actor, that will create the <code>Tasks</code>. To do this we set up a regular <code>Tick</code> message that will be sent every 200
-        milliseconds and triggers creation of tasks. Then we wait for 10 seconds, before shutting everything down. Thanks to the log statements in the
+        system, and the service actor, as well as a <code>TaskCreator</code> actor, that will create the
+        <code>Tasks</code>. To do this we set up a regular <code>Tick</code> message that will be sent every 200
+        milliseconds and triggers creation of tasks. Then we wait for 10 seconds, before shutting everything down.
+        Thanks to the log statements in the
         actor we can observe what happens when we execute the <a href="#run" class="shortcut">program</a>. Each <code>Task</code>
         message receives incremented ids, so we can follow the messages in the log.
     </p>
@@ -186,27 +188,25 @@
 </div>
 
 <div>
-    <h2>Adding a channel</h2>
+    <h2>At least once delivery</h2>
 
     <p>
-        What we are trying to do here, is to accomplish at-least-once delivery. Channels and Persistent Channels are two
-        concepts introduced in Akka Persistance that allow to do that. Normally Akka guarantees at-most-once
+        What we are trying to do here, is to accomplish at-least-once delivery. Normally Akka guarantees at-most-once
         delivery (read <a href="http://doc.akka.io/docs/akka/2.3.2/general/message-delivery-reliability.html">here</a>
         for a detailed discussion of message delivery reliability), and this is what we saw in the earlier examples, no
         Task was delivered twice to the service. However, a lot of the Tasks got lost on the way. With at-least-once
-        delivery we will make sure that every one reaches
-        its destination.
+        delivery we will make sure that every one reaches its destination.
     </p>
 
     <p>
-        When using channels the messages are wrapped in <code>Deliver</code> envelopes and sent to a channel. The <code>Deliver</code>
-        envelope in turn contains a <code>Persistent</code> envelope and the path of the actor the channels should send
-        the message to. The <code>Persistent</code> envelope is used when the message is persisted to disk by the
-        channel. The receiving actor will receive a message of the type <code>ConfirmablePersistent</code>, on which it
-        can call the <code>confirm()</code> method to acknowledge successful delivery. The <code>payload()</code> method
-        can be used to return the message contained in the envelope. If a message is not confirmed after a certain
-        amount of time, the channel will resend the message. If the message is still not confirmed after a number of
-        resend attempts the channel will shut down and not attempt to sent further messages until it is reactivated.
+        If you have used the eventsourced library or the Akka Persistence API prior to 2.3.4, you might have used
+        channels for this. However, in an attempt to streamline the API, the Akka team greatly reduced the amount of
+        concepts. Now, if you want to use persistence, you will have to use <code>UntypedPersistentActor</code>. This
+        actor provides event-sourcing, which means that, unlike in command-sourcing, not every message that is received will automatically be persisted. Instead you have to provide persit blocks that will persist the events that are created from received commands. This is a very nice way to recreate your actors state, as you only persist and replay events that influence the actors state, if you receive other messages (e.g. to retrieve the actor state), these do not need to be persisted and replayed. Usually you separate updating the state and any side effects like sending messages, so that the side effects are not triggered during recovery.
+    </p>
+    <p>
+        To use at least once delivery, Akka persistence introduces the perfectly named <code>UntypedPersistentActorWithAtLeastOnceDelivery</code>. This actor lets you create a <code>deliver</code> block, in which you can provide a message and a destination. Each message needs to have a <code>deliveryId</code>. This id will be used to confirm that the message has arrived. For this the receiver needs to respond with a message that contains this <code>deliveryId</code>. When you receive this response you then call the <code>confirmDelivery</code> method with the <code>deliveryId</code> as the argument. Akka Persistence will attempt redelivering the message until such a response is received. Both the event from which you create the message to be delivered and the response need to be persisted. This way if the actor crashes and restarts it will know which messages have already been delivered, and which need to be resent.
+        Let us take a look of how this looks in our example.
     </p>
 
 
@@ -217,29 +217,24 @@
 
     <p>
         Take a look at <a href="#code/src/main/java/com/tngtech/akka/PersistingCircuitBreaker.java" class="shortcut">PersistingCircuitBreaker.java</a>
-        The <code>PersistingCircuitBreaker</code> actor creates the channel in line 28. Channels come with a
-        ChannelSettings class that can be used to modify the channel behavior, and comes with a nice fluent Java API. In
-        this case, we set the redelivery to 1 second. We also create a circuit breaker actor, that is basically equal to
+        The <code>PersistingCircuitBreaker</code> actor extends the <code>UntypedPersistentActorWithAtLeastOnceDelivery</code>. <code>UntypedPersistentActor</code> provides two abstract receive methods, <code>onReceiveCommand</code> and <code>onReceiveRecover</code>, the former is the regular receive method, while the latter will only be used when the actors starts and performs recovery of persisted events. Furthermore the <code>UntypedPersistentActor</code> provides methods that can be overwritten to change some settings. We use <code>redeliverInterval</code> and <code>persistenceId</code>. The persistenceId is especially important, as it will mark all messages for this actor. Per default the actor path is used, which works well in most cases, but can be a problem if you change your path or if your actor has no name (as the path will then be dependend on the order in which the actors are started).
+        </p><p>
+    We also create a circuit breaker actor, that is basically equal to
         the <code>SimpleCircuitBreaker</code> actor we used in the last step. Upon receiving a <code>Task</code> message
-        the <code>PersistingCircuitBreaker</code> will wrap it into the two envelopes and send it to the <code>CircuitBreakerPersistentActor</code>.
-        Note that we state the original sender as sender of the message, therefore the responses will bypass the <code>PersistingCircuitBreaker</code>
-        actor, which is why we do not have any code to deal with <code>Response</code> messages.
+        the <code>PersistingCircuitBreaker</code> will wrap it into an envelope to preserve the original sender. We need to preserve the original sender, as the <code>PersistingCircuitBreaker</code> needs to receive the response to confirm the delivery. We then persist the envelope to be able to resend the message during actor recovery and pass it on to the <code>updateState</code> method. This method encapsulates the delivery part, as it needs to be performed during recovery as well as normal operation. Here we will put the <code>TaskEnvelope</code> into a new message type which contains the deliveryId. We specify the circuit breaker actor as a receiver. Note that we need to use the path for sending here. This is because the semantics of at-least-once delivery are more in line with sending to ActorSelection than sending to ActorRef, which is made visible by using the path instead of the ref.
+    </p>
+    <p>
+        The handling of <code>DeliveryConfirmation</code> is similar. We also need to persist it, and pass it on to the updateState method. However, before we do that, we extract the response from the service from the confirmation and send it to the original sender. We do not put it into the updateState method, as this would cause the message to be sent each time during recovery, we do not want that. Using event-sourcing it is easy to separate side-effects (sending of the response) from state updates (confirmation of the delivery). In the updateState method we simply confirm that the response was received, and that Akka does not need to try resending the message anymore.
     </p>
 
     <p>
-        In <code>CircuitBreakerPersistentActor</code> we had to add handling of <code>ConfirmablePersistent</code>
-        messages. We extract and send the payload (which is our <code>Task</code> message), and if we receive a <code>Response</code>
-        message, we confirm the original message. Akka Persistence takes care of notifying the channel that the delivery
-        was successful, and that the message should not be resent.
+        In <code>CircuitBreakerPersistentActor</code> we had to add handling of <code>TaskEnvelope</code>
+        messages. We extract the task from the envelope and send it to the service, and if we receive a <code>Response</code>
+        message, we wrap the response into a <code>DeliveryConfirmation</code> message, that contains all information the <code>PersistingCircuitBreaker</code> actor will need.
     </p>
 
     <p>
-        We use the resending feature to make sure <code>Task</code>s that were rejected by the circuit breaker or
-        received no response from the service will be resent. In order to do this, the <code>Task</code>s will be first
-        sent into a channel, and the channel will forward them to the circuit breaker. As we want to make sure that the
-        service received the message, the messages will only be confirmed when the response was received. For that we
-        (mis-)use the map function on the response future. While the future will be returned unchanged, we will confirm
-        the confirmable as a side-effect.
+        We use the resending feature to make sure <code>Task</code>s that were rejected by the circuit breaker or received no response from the service will be resent. A nice side-effect is that our messages survive a restart of the actor or the complete actor system. If you run the example twice you will see messages that were not confirm in the last run being sent around 1 second after the start.
     </p>
 </div>
 
@@ -260,98 +255,11 @@
     </p>
 
     <p>
-        Usually you will want to use PersistentChannel instead of Channel. In addition to providing at-least-once
-        delivery, PersistentChannel will persist all messages to disk, thus making sure that the messages will be
-        replayed after a JVM crash or similar unfortunate incidents. In order to achieve this, go to <a
-            href="#code/src/main/java/com/tngtech/akka/PersistingCircuitBreaker.java" class="shortcut">PersistingCircuitBreaker.java</a>
-        and lines 35-43 in the constructor and comment or remove lines 31-34.
-        When running the example now you will not see much difference. However, running it a second time you will notice
-        that the run does not start with Task 0, instead it starts with tasks that were not delivered in the last run.
+        The combination of persistent at-least-once delivery and the circuit breaker is quite nice, if you are dealing with unreliable services. However, problems can arise if the service is unavailable for a long time or you send a high number of messages. As the <code>UntypedPersistentActorWithAtLeastOnceDelivery</code> actor stores all undelivered messages in memory you can face problems when a lot of messages are waiting for delivery. There is a setting for the at-least-once delivery, <code>maxUndeliveredMessages</code> which can be used to deal with the problem. Now, when the limit is reached trying to deliver new messages will result in an Exception being thrown. In such a case you use supervision to divert all messages to a temporary storage until sending is possible again. Or you could stop creating new messages or take other measures that make sense for your business case.
     </p>
 
-    <p>
-        There is a problem with this solution though. If the channel fails to persist the message, the message can get
-        lost without the sender ever noticing. There is a way to solve this problem. The settings of the
-        PersistentChannel allow to set a mode in which a persistence confirmation will be sent, i.e. if the channel was
-        successful in persisting the message, the <code>Persistent</code> will be sent to the sender, if not a <code>PersistenceFailure</code>
-        message will be sent, containing the message and cause of failure. Let us take a look at what is necessary to
-        ensure that our messages were persisted.
-    </p>
-
-    <p>
-        First we need to enable the setting. To do this, change the PersistentChannelSettings. In line 38, change the
-        value from <code>false</code> to <code>true</code>. Next we will need some logic to handle the channel messages.
-        One possibility is to include this into the sender of the messages. If anyone can deal with such problems, it
-        will be the sender. If the original message was created by user input, the sender could return a meaningful
-        error message to the user, deactivate sending messages or just skip the persistent channel. When the only thing
-        you want to do in such a case is logging such an error, the logic can be encapsulated in an actor of its own.
-    </p>
-
-    <p>
-        Starting at line 143 you will find an actor to do this.  This actor will be used as the sender
-        for messages to the channel. As such it also needs to deal with the responses, and therefore needs to know the
-        original sender of our <code>Tasks</code>. Therefore we create the actor as a temporary actor, which will be
-        created for each single message. This way we can also easily set a timeout in case persistence takes too long.
-    </p>
-
-    <p>
-        You can just uncomment the actor, and also include the lines 55-56, while commenting line 53. Running now you
-        should see no difference. You can change the log level of the successfully persisted messages in line 167 to see
-        that
-        the confirmations are sent. Provoking a failure is hard, Akka Persistance is pretty resilient. The files used by
-        Akka Persistence are in the journal folder, you can try to change permissions, delete files or other nasty
-        stuff. During my testing everything continued to work.
-    </p>
-
-    <p>
-        Persistent Channels offer a number of other settings as well. Two of those are very interesting in our context,
-        pending
-        confirmations max and min. With those two values the channel can be stopped from sending further messages if a
-        certain number of messages is not yet confirmed. The min value allows to set a value at which sending will be
-        resumed.
-        In effect, this can be used to build a simple circuit breaker.
-    </p>
 
 </div>
-
-<div>
-    <h2>The persistence only solution</h2>
-
-    <p>
-        The last step is to see how well we can make it work using only persistent channel. Take a look at the code in
-        <a
-                href="#code/src/main/java/com/tngtech/akka/PersistingChannelLimiter.java"
-                class="shortcut">PersistingChannelLimiter.java</a>. You will note that it contains two other actors.
-        First the <code>PersistentReceiver</code>. This is the actor the <code>Tasks</code> are sent to through the
-        channel. The receiver creates
-        a temporary actor to deal with each of the messages it received from the channel. Those actors are defined in
-        <code>ServiceCaller</code>. They extract the <code>Task</code> from the <code>ConfirmablePersistent</code> and
-        hold the information about the original
-        sender and the confirmable in their internal state until they receive a <code>Response</code>. When a <code>Response</code>
-        is received,
-        they confirm the original message so that it will not be sent once more and return the response to the original
-        sender. After this they are stopped. This is important, as we create a new actor for each task, so this would be
-        a memory leak if the actors were not stopped. This is also the reason why we define a receive timeout, so that
-        we can stop the actor when the service does not respond, either because it is down, or because the response got
-        lost.
-    </p>
-
-    <p>
-        If we use this solution in our <a href="#code/src/main/java/com/tngtech/akka/Main.java" class="shortcut">Main.java</a>
-        method, we
-        see that the output is nearly
-        perfect, all messages are
-        delivered, only two messages are delivered to the service once it stops being responsive. This approach works
-        fine however it has some restrictions. If the response time of the service is slower than the rate of messages
-        coming in, this solution can turn into a bottleneck, as the number of maximum pending messages will limit how
-        many messages you can send. In contrast the circuit breaker imposes no limits while the service responds, and
-        only acts when the service has problems. Therefore we would suggest using the circuit breaker where possible,
-        and ensure resending of messages using a persistent channel with unlimited number of pending messages. When the
-        service is part of your own system or a responsive system with a very fast connection the channel only solution
-        can be interesting to look at, as it is simpler and easier to implement.
-    </p>
-</div>
-
 
 <div>
     <h2>Further exercises</h2>
@@ -360,12 +268,11 @@
         In order to gain more experience with circuit breakers you can try several things using this template:
     <ul>
         <li>Make the service respond in slow mode and check how the different implementations deal with this</li>
-        <li>Add a delay to responding to a Task in normal mode and look at how the different implementations deal with
-            this
+        <li>Add a delay to responding to a Task in normal mode and look at how the different implementations deal with this
         </li>
-        <li>Use variable delays in the service, make it return or drop responses randomly, which solution is the best
-            under this circumstances?
+        <li>Use variable delays in the service, make it return or drop responses randomly, which solution is the best under this circumstances?
         </li>
+        <li>Limit the number of undelivered messages to 5 and deal with the exceptions that will occur</li>
     </ul>
     </p>
 
