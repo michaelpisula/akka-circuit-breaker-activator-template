@@ -23,8 +23,11 @@ public class Main {
     ActorRef taskCreator = system.actorOf( TaskCreator.props( service ), "TaskCreator" );
 
     system.scheduler().schedule( Duration.create( 0, TimeUnit.SECONDS ),
-                                 Duration.create( 200, TimeUnit.MILLISECONDS ), taskCreator, new Tick(),
-                                 system.dispatcher(), ActorRef.noSender()
+                                 Duration.create( 200, TimeUnit.MILLISECONDS ),
+                                 taskCreator,
+                                 new Tick(),
+                                 system.dispatcher(),
+                                 ActorRef.noSender()
     );
 
     Thread.sleep( 10000 );

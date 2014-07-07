@@ -20,7 +20,7 @@ public class SimpleCircuitBreaker extends UntypedActor {
   private LoggingAdapter log = Logging.getLogger( getContext().system(), this );
 
   public static final int MAX_FAILURES = 2;
-  public static final Timeout ASK_TIMEOUT = Timeout.durationToTimeout( Duration.create( 100, TimeUnit.MILLISECONDS ) );
+  public static final Timeout ASK_TIMEOUT = Timeout.apply(  100, TimeUnit.MILLISECONDS );
   public static final FiniteDuration CALL_TIMEOUT = Duration.create( 100, TimeUnit.MILLISECONDS );
   public static final FiniteDuration RESET_TIMEOUT = Duration.create( 2, TimeUnit.SECONDS );
 
