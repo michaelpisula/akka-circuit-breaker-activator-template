@@ -1,6 +1,6 @@
 <html>
 <head>
-    <title>Circuit Breaker Template in Java</title>
+    <title>Circuit Breaker Template in Scala</title>
 </head>
 
 <body>
@@ -8,8 +8,7 @@
 <div>
     <h2>Introduction</h2>
 
-    <p>In this template we will take a look at a typical problem when talking to other
-        systems: dealing with their failure.</p>
+    <p>In this template we will take a look at a typical problem when talking to other systems: dealing with their failure.</p>
 
     <p>
         Especially when talking to publicly available services you cannot always operate under the assumption that the
@@ -34,7 +33,7 @@
     <p>
         First we will need a Service to call. We will simulate this service using an actor. Take a look
         at the code in
-        <a href="#code/src/main/java/com/tngtech/akka/Service.java" class="shortcut">Service.java</a>.
+        <a href="#code/src/main/scala/com/tngtech/akka/Service.scala" class="shortcut">Service.scala</a>.
     </p>
 
     <p>
@@ -62,8 +61,8 @@
     </p>
 
     <p>
-        We defined a <code>main</code> method in the <a href="#code/src/main/java/com/tngtech/akka/Main.java"
-                                                        class="shortcut">Main.java</a> class. It creates an actor
+        We defined a <code>main</code> method in the <a href="#code/src/main/scala/com/tngtech/akka/Main.scala"
+                                                        class="shortcut">Main</a> object. It creates an actor
         system, and the service actor, as well as a <code>TaskCreator</code> actor, that will create the
         <code>Tasks</code>. To do this we set up a regular <code>Tick</code> message that will be sent every 200
         milliseconds and triggers creation of tasks. Then we wait for 10 seconds, before shutting everything down.
@@ -90,23 +89,20 @@
 
     <p>
         Let us tackle the problem using a circuit breaker. The relevant code can be found in <a
-            href="#code/src/main/java/com/tngtech/akka/SimpleCircuitBreaker.java" class="shortcut">SimpleCircuitBreaker.java</a>.
+            href="#code/src/main/scala/com/tngtech/akka/SimpleCircuitBreaker.scala" class="shortcut">SimpleCircuitBreaker.scala</a>.
     </p>
 
     <p>
         Let us go through the code.</p>
 
     <p> First we need to initialize the circuit breaker:
-        <pre><code>new CircuitBreaker( getContext().dispatcher(),
-            getContext().system().scheduler(),
-            MAX_FAILURES,
-            CALL_TIMEOUT,
-            RESET_TIMEOUT )</code></pre>
-    We need to specify the dispatcher the circuit breaker will be running on, as well as a scheduler. The scheduler is
-    necessary as the
-    circuit breaker uses <code>Callable</code>s to send the messages to the service. Next, we set the maximum number of
-    failed
-    attempts before the circuit breaker opens. This setting is very specific to your situation. If the service you
+        <pre><code>new CircuitBreaker(context.system.scheduler,
+                        maxFailures = 2,
+                        callTimeout = 100 milliseconds,
+                        resetTimeout = 2 seconds
+                        )</code></pre>
+    We need to specify the dispatcher the circuit breaker will be running on, as well as a scheduler. As the dispatcher is implicit, we just import the dispatcher our actor runs on in line 14. The scheduler is necessary as the circuit breaker uses <code>Callable</code>s to send the messages to the service. Next, we set the maximum number of
+    failed attempts before the circuit breaker opens. This setting is very specific to your situation. If the service you
     are talking to is on the same machine as your Akka process, you can use a low setting, as failures are most
     likely caused by problems within the service. On the other hand, a service you connect to through the internet may
     fail on occasion because there are problems with the connection, you will want to make sure that you do not
@@ -125,10 +121,10 @@
     <h2>Sending messages</h2>
 
     <p>
-        Now, take a look at lines 61-67 to see how to send messages to the service using the circuit breaker. The
+        Now, take a look at line 28 to see how to send messages to the service using the circuit breaker. The
         circuit breaker
-        provides two modes of operation, callWithCircuitBreaker will make the call asynchronously and return a future
-        containing the result of the call, while callWithSyncCircuitBreaker allows you to perform a synchronous call. We
+        provides two modes of operation, withCircuitBreaker will make the call asynchronously and return a future
+        containing the result of the call, while withSyncCircuitBreaker allows you to perform a synchronous call. We
         will use the
         asynchronous method here. The method expects a callable object as parameter, which we will declare anonymously
         at this point. The callable needs to return a <code>Future&lt;Object&gt;</code>. This makes it very natural to
@@ -139,10 +135,10 @@
     </p>
 
     <p>
-        Time to run the example. Go to the <a href="#code/src/main/java/com/tngtech/akka/Main.java" class="shortcut">Main.java</a>
+        Time to run the example. Go to the <a href="#code/src/main/scala/com/tngtech/akka/Main.scala" class="shortcut">Main.scala</a>
         class
-        and comment line 13, while uncommenting line 14,
-    <pre><code>system.actorOf( SimpleCircuitBreaker.props(), "SimpleCircuitBreaker" );</code></pre>
+        and comment line 15, while uncommenting line 16,
+    <pre><code>system.actorOf(SimpleCircuitBreaker.props(serviceProps), SimpleCircuitBreaker.name)</code></pre>
     Once you've done this, click <code>Save</code> and switch to the <a
         href="#run" class="shortcut">Run</a> tab. Activator should run the program after compiling automatically,
     unless you switched this off. In that case, just click the <code>Start</code> button.
@@ -164,7 +160,7 @@
 
 
     <p>
-        Before we move on, note that we use the call timeout of the circuit breaker for the ask timeout. This may or may
+        Before we move on, note that we use the same duration for the call timeout of the circuit breaker and the ask timeout. This may or may
         not make sense for your use-case. You may want to use a longer timeout for the ask, so as to still receive
         responses from the service, even if the circuit breaker will treat that call as failed and cease sending further
         messages. Note that you will need to add handling of the messages in this case, as responses of timed out calls
@@ -173,7 +169,7 @@
         the call failed or succeeded, the call will not be interrupted after the timeout. This is useful when you want
         to get the result, but it means that the circuit breaker will open only after the call finishes. Try setting the
         ask timeout to a higher value in the code (e.g. <code>500</code>), and see what happens. This is not the
-        intended behavior, and a <a href="https://github.com/akka/akka/issues/13950">issue</a> is open for this.
+        intended behavior however, and an <a href="https://github.com/akka/akka/issues/13950">issue</a> is open for this.
 
     </p>
 
@@ -192,20 +188,20 @@
 
     <p>
         What we are trying to do here, is to accomplish at-least-once delivery. Normally Akka guarantees at-most-once
-        delivery (read <a href="http://doc.akka.io/docs/akka/2.3.2/general/message-delivery-reliability.html">here</a>
-        for a detailed discussion of message delivery reliability), and this is what we saw in the earlier examples, no
+        delivery (read <a href="http://doc.akka.io/docs/akka/2.3.4/general/message-delivery-reliability.html">here</a>
+        for a detailed discussion of message delivery guarantees), and this is what we saw in the earlier examples, no
         Task was delivered twice to the service. However, a lot of the Tasks got lost on the way. With at-least-once
         delivery we will make sure that every one reaches its destination.
     </p>
 
     <p>
         If you have used the eventsourced library or the Akka Persistence API prior to 2.3.4, you might have used
-        channels for this. However, in an attempt to streamline the API, the Akka team greatly reduced the amount of
-        concepts. Now, if you want to use persistence, you will have to use <code>UntypedPersistentActor</code>. This
-        actor provides event-sourcing, which means that, unlike in command-sourcing, not every message that is received will automatically be persisted. Instead you have to provide persit blocks that will persist the events that are created from received commands. This is a very nice way to recreate your actors state, as you only persist and replay events that influence the actors state, if you receive other messages (e.g. to retrieve the actor state), these do not need to be persisted and replayed. Usually you separate updating the state and any side effects like sending messages, so that the side effects are not triggered during recovery.
+        channels for this. However, the Akka team greatly reduced the amount of
+        concepts to streamline the API. Now, if you want to use persistence, you will have to use <code>PersistentActor</code>. This
+        actor provides event-sourcing, which means that, unlike in command-sourcing, not every message that is received will automatically be persisted. Instead you have to provide persist blocks that will persist the events that are created from received commands. This is a very nice way to recreate your actors state, as you only persist and replay events that influence the actors state, if you receive other messages (e.g. to retrieve the actor state), these do not need to be persisted and replayed. Usually you separate updating the state and any side effects like sending messages, so that the side effects are not triggered during recovery.
     </p>
     <p>
-        To use at least once delivery, Akka persistence introduces the perfectly named <code>UntypedPersistentActorWithAtLeastOnceDelivery</code>. This actor lets you create a <code>deliver</code> block, in which you can provide a message and a destination. Each message needs to have a <code>deliveryId</code>. This id will be used to confirm that the message has arrived. For this the receiver needs to respond with a message that contains this <code>deliveryId</code>. When you receive this response you then call the <code>confirmDelivery</code> method with the <code>deliveryId</code> as the argument. Akka Persistence will attempt redelivering the message until such a response is received. Both the event from which you create the message to be delivered and the response need to be persisted. This way if the actor crashes and restarts it will know which messages have already been delivered, and which need to be resent.
+        To use at least once delivery, Akka persistence introduces the perfectly named <code>AtLeastOnceDelivery</code> trait. This trait lets you create a <code>deliver</code> block, in which you can provide a message and a destination. Each message needs to have a <code>deliveryId</code>. This id will be used to confirm that the message has arrived. For this the receiver needs to respond with a message that contains this <code>deliveryId</code>. When you receive this response you then call the <code>confirmDelivery</code> method with the <code>deliveryId</code> as the argument. Akka Persistence will attempt redelivering the message until such a response is received. Both the event from which you create the message to be delivered and the response need to be persisted. This way if the actor crashes and restarts it will know which messages have already been delivered, and which need to be resent.
         Let us take a look of how this looks in our example.
     </p>
 
@@ -216,11 +212,10 @@
     <h2>The persisting circuit breaker</h2>
 
     <p>
-        Take a look at <a href="#code/src/main/java/com/tngtech/akka/PersistingCircuitBreaker.java" class="shortcut">PersistingCircuitBreaker.java</a>
-        The <code>PersistingCircuitBreaker</code> actor extends the <code>UntypedPersistentActorWithAtLeastOnceDelivery</code>. <code>UntypedPersistentActor</code> provides two abstract receive methods, <code>onReceiveCommand</code> and <code>onReceiveRecover</code>, the former is the regular receive method, while the latter will only be used when the actors starts and performs recovery of persisted events. Furthermore the <code>UntypedPersistentActor</code> provides methods that can be overwritten to change some settings. We use <code>redeliverInterval</code> and <code>persistenceId</code>. The persistenceId is especially important, as it will mark all messages for this actor. Per default the actor path is used, which works well in most cases, but can be a problem if you change your path or if your actor has no name (as the path will then be dependend on the order in which the actors are started).
+        Take a look at <a href="#code/src/main/scala/com/tngtech/akka/PersistingCircuitBreaker.scala" class="shortcut">PersistingCircuitBreaker.scala</a>
+        The <code>PersistingCircuitBreaker</code> actor extends the <code>PersistentActor</code> with <code>AtLeastOnceDelivery</code>. <code>PersistentActor</code> provides two  receive methods, <code>receiveCommand</code> and <code>receiveRecover</code>, the former is the regular receive method, while the latter will only be used when the actors starts and performs recovery of persisted events. Furthermore the <code>PersistentActor</code> provides methods that can be overwritten to change some settings. We use <code>redeliverInterval</code> and <code>persistenceId</code>. The persistenceId is especially important, as it will mark all messages for this actor.
         </p><p>
-    We also create a circuit breaker actor, that is basically equal to
-        the <code>SimpleCircuitBreaker</code> actor we used in the last step. Upon receiving a <code>Task</code> message
+    We also create a circuit breaker actor, that is basically equal to the <code>SimpleCircuitBreaker</code> actor we used in the last step. Upon receiving a <code>Task</code> message
         the <code>PersistingCircuitBreaker</code> will wrap it into an envelope to preserve the original sender. We need to preserve the original sender, as the <code>PersistingCircuitBreaker</code> needs to receive the response to confirm the delivery. We then persist the envelope to be able to resend the message during actor recovery and pass it on to the <code>updateState</code> method. This method encapsulates the delivery part, as it needs to be performed during recovery as well as normal operation. Here we will put the <code>TaskEnvelope</code> into a new message type which contains the deliveryId. We specify the circuit breaker actor as a receiver. Note that we need to use the path for sending here. This is because the semantics of at-least-once delivery are more in line with sending to ActorSelection than sending to ActorRef, which is made visible by using the path instead of the ref.
     </p>
     <p>
@@ -228,7 +223,7 @@
     </p>
 
     <p>
-        In <code>CircuitBreakerPersistentActor</code> we had to add handling of <code>TaskEnvelope</code>
+        In <code>CircuitBreakerActor</code> we had to add handling of <code>TaskEnvelope</code>
         messages. We extract the task from the envelope and send it to the service, and if we receive a <code>Response</code>
         message, we wrap the response into a <code>DeliveryConfirmation</code> message, that contains all information the <code>PersistingCircuitBreaker</code> actor will need.
     </p>
@@ -241,9 +236,9 @@
 <div>
     <h2>Running the example</h2>
 
-    <p>Go to the <a href="#code/src/main/java/com/tngtech/akka/Main.java" class="shortcut">Main.java</a> class
-        and comment line 14, while uncommenting line 15,
-    <pre><code>system.actorOf( PersistingCircuitBreaker.props(), "PersistingCircuitBreaker" );</code></pre>
+    <p>Go to the <a href="#code/src/main/scala/com/tngtech/akka/Main.scala" class="shortcut">Main.scala</a> class
+        and comment line 16, while uncommenting line 17,
+    <pre><code>system.actorOf(PersistentCircuitBreaker.props(serviceProps), PersistentCircuitBreaker.name)</code></pre>
     Once you've done this, click <code>Save</code> and switch to the <a
         href="#run" class="shortcut">Run</a> tab. Activator should run the program after compiling automatically,
     unless you switched this off. In that case, just click the <code>Start</code> button.</p>
@@ -255,7 +250,7 @@
     </p>
 
     <p>
-        The combination of persistent at-least-once delivery and the circuit breaker is quite nice, if you are dealing with unreliable services. However, problems can arise if the service is unavailable for a long time or you send a high number of messages. As the <code>UntypedPersistentActorWithAtLeastOnceDelivery</code> actor stores all undelivered messages in memory you can face problems when a lot of messages are waiting for delivery. There is a setting for the at-least-once delivery, <code>maxUndeliveredMessages</code> which can be used to deal with the problem. Now, when the limit is reached trying to deliver new messages will result in an Exception being thrown. In such a case you use supervision to divert all messages to a temporary storage until sending is possible again. Or you could stop creating new messages or take other measures that make sense for your business case.
+        The combination of persistent at-least-once delivery and the circuit breaker is quite nice, if you are dealing with unreliable services. However, problems can arise if the service is unavailable for a long time or you send a high number of messages. As the <code>AtLeastOnceDelivery</code> actor stores all undelivered messages in memory you can face problems when a lot of messages are waiting for delivery. There is a setting for the at-least-once delivery, <code>maxUndeliveredMessages</code> which can be used to deal with the problem. Now, when the limit is reached trying to deliver new messages will result in an Exception being thrown. In such a case you could use supervision to divert all messages to a temporary storage until sending is possible again. Or you could stop creating new messages or take other measures that make sense for your business case.
     </p>
 
 

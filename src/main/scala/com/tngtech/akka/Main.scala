@@ -7,7 +7,6 @@ import scala.concurrent.duration
 
 object Main {
 
-
   def main(args: Array[String]) {
     val system = ActorSystem("CircuitBreaker")
 
@@ -19,8 +18,9 @@ object Main {
 
     val taskCreator = system.actorOf(TaskCreator.props(service), TaskCreator.name)
 
-    import duration._
     import system.dispatcher
+
+import scala.concurrent.duration._
 
     system.scheduler.schedule(0 seconds, 200 milliseconds, taskCreator, Tick)
 
