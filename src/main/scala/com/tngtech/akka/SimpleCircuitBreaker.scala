@@ -6,6 +6,7 @@ import akka.util.Timeout
 
 object SimpleCircuitBreaker {
   def props(serviceProps: Props) = Props(classOf[SimpleCircuitBreaker], serviceProps)
+  val name = "SimpleCircuitBreaker"
 }
 
 class SimpleCircuitBreaker(serviceProps: Props) extends Actor with ActorLogging {

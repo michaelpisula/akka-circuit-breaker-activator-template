@@ -9,6 +9,8 @@ import com.tngtech.akka.PersistentCircuitBreaker.{DeliverTask, DeliveryConfirmat
 object PersistentCircuitBreaker {
   def props(serviceProps: Props) = Props(classOf[PersistentCircuitBreaker], serviceProps)
 
+  val name = "PersistentCircuitBreaker"
+
   sealed trait Evt
 
   case class TaskEnvelope(task: Service.Task, sender: ActorRef) extends Evt
